@@ -8,7 +8,7 @@ For instance, it does happens with `port80.npt` file if we try to rebuild it int
 We assume all nPrint files are being generated as follows:
 ```
 nprint -F -1 -P <filename>.pcap -i -u -t -4 -6 -p 0 -O 4 -W <filename>.npt -S
-``´
+```
 
 
 
