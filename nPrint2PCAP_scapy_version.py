@@ -72,7 +72,6 @@ def bits_to_bytes(bits):
     return int(bits, 2).to_bytes(len(bits) // 8, byteorder='big')
     
 
-
 def process_field(row, prefix, length):
     """Process a field with given prefix and bit length"""
     cols = [col for col in row.index if col.startswith(prefix)]
@@ -116,6 +115,19 @@ def binary_to_ip_string(binary_ip):
   return ip_string
 
 
+def verify_set_protocols(row, df, prefix_list) -> str:
+    protocols=''
+    for prefix in prefix_list:
+        cols = df.columns[df.columns.str.contains(prefix)]
+        if len(cols) > 0:
+            first_col_with_substring = cols[0]
+            if str(row[first_col_with_substring]) != str(-1): # if has col and the row's first col is != -1 (e.g., ipv4_ver_0),
+                                                              # set protocol. NOTE: We assume the remaining cols of this protocol
+                                                              # are correctly set (i.e., no '-1' in between) 
+                protocols += prefix
+    return protocols
+
+
 def csv_to_packets(filename):
 
     #print(df.shape[0]) # df.shape: (lines, columns)
@@ -124,7 +136,7 @@ def csv_to_packets(filename):
                   # it contains either the header
                   # (or badly positioned bit information e.g., 0,1,0,...)
     try:
-        df = pd.read_csv(filename)
+        df = pd.read_csv(filename, header=0) # header is first row (row 0)
     except FileNotFoundError:
         raise FileNotFoundError(f"File '{filename}' not found.")
     if len(df) < min_lines:
@@ -136,78 +148,138 @@ def csv_to_packets(filename):
     packets = []
     rnd_mac_unique = []
     ipv4_to_mac_dict = {}
+    
     # Process each row in the CSV
     for index, row in df.iterrows():
         try:
             #print(f"Processing row {index}: {row.to_dict()}")  # Debug: Print the row data
-
             
-            # Concatenate the bits to form a minimal value that is multiple of 8 and create bytes (or bytes) from it.
-            # For example: ipv4 version (4 bits) + ipv4 hl (4 bits) sum up to 8. So, gather these fields and create a byte.
-            total = create_byte_representation(row, ipv4_prefixes)
+            prefix_list = ['eth_', 'ipv4_', 'ipv6_', 'tcp_', 'udp_']
+            protocols = verify_set_protocols(row, df, prefix_list)
 
-            # Concatenate using the `+` operator
-            ipv4_header = b''.join(total)
-            print("IPv4 (concatenated): ", ipv4_header)
-            print()
+            print("SET PROTOCOLS:", protocols)
 
-            ##########################################################################
+            ###############
+            ## IPv4/TCP ##
+            ##############
+            if protocols == 'ipv4_tcp_':
+                ########## 
+                ## IPv4 ##
+                ########## 
+                # Concatenate the bits to form a minimal value that is multiple of 8 and create bytes (or bytes) from it.
+                # For example: ipv4 version (4 bits) + ipv4 hl (4 bits) sum up to 8. So, gather these fields and create a byte.
+                total = create_byte_representation(row, ipv4_prefixes)
 
+                # Concatenate using the `+` operator
+                ipv4_header = b''.join(total)
+                
+                # Concatenate the bits to form a minimal value that is multiple of 8 and create bytes (or bytes) from it.
+                total = create_byte_representation(row, tcp_prefixes)
+                
+                #########
+                ## TCP ##
+                #########
+                # Concatenate using the `+` operator
+                tcp_header = b''.join(total)
+                #print("TCP (concatenated): ", tcp_header)
+
+                # payload for IPv4/TCP 
+                payload = int(process_field(row, 'ipv4_tl', 16),2) - len(ipv4_header) - len(tcp_header) # TCP payload = IPv4 total len (field) - IPv4 len - (TCP data offset * 4)
+                payload = b'\x00' * payload
+                packet_data = ipv4_header + tcp_header + payload
+
+                # Save the unique IPs to create ethernet header
+                prefix = 'ipv4_src_'
+                length = 32
+                ipv4_src = process_field(row, prefix, length)
+                ipv4_src = binary_to_ip_string(ipv4_src)
+                #
+                prefix = 'ipv4_dst_'
+                length = 32
+                ipv4_dst = process_field(row, prefix, length)
+                ipv4_dst = binary_to_ip_string(ipv4_dst)
+                
+                # Generate a random unique MAC
+                rnd_mac = generate_unique_random_mac(rnd_mac_unique)
+
+                if ipv4_src not in ipv4_to_mac_dict:
+                    ipv4_to_mac_dict[ipv4_src] = rnd_mac
+                
+                # Generate a random unique MAC
+                rnd_mac = generate_unique_random_mac(rnd_mac_unique)
+
+                if ipv4_dst not in ipv4_to_mac_dict:
+                    ipv4_to_mac_dict[ipv4_dst] = rnd_mac
+
+                for key, value in ipv4_to_mac_dict.items():
+                    print(key, value)
+
+                # Create packet
+                packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / Raw(load=packet_data)
+                print("packet len:", len(packet))
+
+                #print(f"Packet: {packet}")  # Debug: Print the constructed packet
+                packets.append(packet)
             
-            # Concatenate the bits to form a minimal value that is multiple of 8 and create bytes (or bytes) from it.
-            total = create_byte_representation(row, tcp_prefixes)
+            elif protocols == 'ipv4_udp_':
+                ########## 
+                ## IPv4 ##
+                ########## 
+                # Concatenate the bits to form a minimal value that is multiple of 8 and create bytes (or bytes) from it.
+                # For example: ipv4 version (4 bits) + ipv4 hl (4 bits) sum up to 8. So, gather these fields and create a byte.
+                total = create_byte_representation(row, ipv4_prefixes)
 
-            # Concatenate using the `+` operator
-            tcp_header = b''.join(total)
-            #print("TCP (concatenated): ", tcp_header)
+                # Concatenate using the `+` operator
+                ipv4_header = b''.join(total)
+                
+                # Concatenate the bits to form a minimal value that is multiple of 8 and create bytes (or bytes) from it.
+                total = create_byte_representation(row, tcp_prefixes)
+                
+                #########
+                ## UDP ##
+                #########
+                # Concatenate using the `+` operator
+                udp_header = b''.join(total)
+                #print("TCP (concatenated): ", tcp_header)
 
-        
+                # payload for IPv4/TCP 
+                payload = int(process_field(row, 'ipv4_tl', 16),2) - len(ipv4_header) - len(udp_header) # UDP payload = TODO
+                payload = b'\x00' * payload
+                packet_data = ipv4_header + udp_header + payload
 
-            # payload for IPv4/TCP 
-            payload = int(process_field(row, 'ipv4_tl', 16),2) - len(ipv4_header) - len(tcp_header) # TCP payload = IPv4 total len (field) - IPv4 len - (TCP data offset * 4)
-            payload = b'\x00' * payload
-            packet_data = ipv4_header + tcp_header + payload
-            
-            # Debugging the packet data
-            #print(f"Packet Data (Hex): {packet_data.hex()}")
+                # Save the unique IPs to create ethernet header
+                prefix = 'ipv4_src_'
+                length = 32
+                ipv4_src = process_field(row, prefix, length)
+                ipv4_src = binary_to_ip_string(ipv4_src)
+                #
+                prefix = 'ipv4_dst_'
+                length = 32
+                ipv4_dst = process_field(row, prefix, length)
+                ipv4_dst = binary_to_ip_string(ipv4_dst)
+                
+                # Generate a random unique MAC
+                rnd_mac = generate_unique_random_mac(rnd_mac_unique)
 
-            # Save the unique IPs to create ethernet header
-            prefix = 'ipv4_src_'
-            length = 32
-            ipv4_src = process_field(row, prefix, length)
-            ipv4_src = binary_to_ip_string(ipv4_src)
-            #
-            prefix = 'ipv4_dst_'
-            length = 32
-            ipv4_dst = process_field(row, prefix, length)
-            ipv4_dst = binary_to_ip_string(ipv4_dst)
-            #
-            #print("ipv4_src (string):", ipv4_src)
-            #print("ipv4_dst (string):", ipv4_dst)
+                if ipv4_src not in ipv4_to_mac_dict:
+                    ipv4_to_mac_dict[ipv4_src] = rnd_mac
+                
+                # Generate a random unique MAC
+                rnd_mac = generate_unique_random_mac(rnd_mac_unique)
 
-            # Generate a random unique MAC
-            rnd_mac = generate_unique_random_mac(rnd_mac_unique)
-            #print("rnd_mac:", rnd_mac)
+                if ipv4_dst not in ipv4_to_mac_dict:
+                    ipv4_to_mac_dict[ipv4_dst] = rnd_mac
 
-            if ipv4_src not in ipv4_to_mac_dict:
-                ipv4_to_mac_dict[ipv4_src] = rnd_mac
-            
-            # Generate a random unique MAC
-            rnd_mac = generate_unique_random_mac(rnd_mac_unique)
-            #print("rnd_mac:", rnd_mac)
+                for key, value in ipv4_to_mac_dict.items():
+                    print(key, value)
 
-            if ipv4_dst not in ipv4_to_mac_dict:
-                ipv4_to_mac_dict[ipv4_dst] = rnd_mac
+                # Create packet
+                packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / Raw(load=packet_data)
+                print("packet len:", len(packet))
 
-            for key, value in ipv4_to_mac_dict.items():
-                print(key, value)
+                #print(f"Packet: {packet}")  # Debug: Print the constructed packet
+                packets.append(packet)
 
-            # Create packet
-            packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / Raw(load=packet_data)
-            print("packet len:", len(packet))
-
-            #print(f"Packet: {packet}")  # Debug: Print the constructed packet
-            packets.append(packet)
         
         except ValueError as e:
             print(f"Error processing packet for row {index}: {e}")
@@ -220,6 +292,7 @@ def csv_to_packets(filename):
 
 # Usage
 packets = csv_to_packets('./examples/port443_testing.npt')
+
 
 # Save packets to PCAP
 with PcapWriter('output.pcap', append=True, sync=True) as pcap_writer:
