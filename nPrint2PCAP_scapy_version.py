@@ -268,13 +268,13 @@ def csv_to_packets(filename):
 
                 # Save the unique IPs to create ethernet header
                 prefix = 'ipv4_src_'
-                length = 32
+                length_ip = 32
                 ipv4_src = process_field(row, prefix, length)
                 ipv4_src = binary_to_ip_string(ipv4_src)
                 #
                 prefix = 'ipv4_dst_'
-                length = 32
-                ipv4_dst = process_field(row, prefix, length)
+                length_ip = 32
+                ipv4_dst = process_field(row, prefix, length_ip)
                 ipv4_dst = binary_to_ip_string(ipv4_dst)
                 
                 # Generate a random unique MAC
