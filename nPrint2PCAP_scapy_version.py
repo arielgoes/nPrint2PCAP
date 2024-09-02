@@ -10,6 +10,8 @@ underline = '\033[04m'
 reverse = '\033[07m'
 strikethrough = '\033[09m'
 invisible = '\033[08m'
+green = '\033[32m'
+
 
 eth_prefixes = {'eth_dhost_':48,
                 'eth_shost_':48,
@@ -88,7 +90,7 @@ def process_field(row, prefix, length):
     bits = ''.join(str(row[col]) for col in cols if row[col] != -1)
     if len(bits) > length:
         raise ValueError(f"Field {prefix} has more bits than expected ({length})")
-    print(f"Processing {prefix}: {bits}")  # Debug: Print the bits being processed
+    #print(f"Processing {prefix}: {bits}")  # Debug: Print the bits being processed
     return bits
 
 
@@ -235,7 +237,7 @@ def csv_to_packets(filename):
                     packet = Raw(load=packet_data)
                 else:
                     packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / Raw(load=packet_data)
-                print("packet len:", len(packet))
+                #print("packet len:", len(packet))
 
                 #print(f"Packet: {packet}")  # Debug: Print the constructed packet
                 packets.append(packet)
@@ -300,7 +302,7 @@ def csv_to_packets(filename):
                     packet = Raw(load=packet_data)
                 else:
                     packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / Raw(load=packet_data)
-                print("packet len:", len(packet))
+                #print("packet len:", len(packet))
 
                 #print(f"Packet: {packet}")  # Debug: Print the constructed packet
                 packets.append(packet)
@@ -324,18 +326,18 @@ if __name__ == '__main__':
                         required=True)
     
     args = parser.parse_args()
-    input_nprint_file = args.input[0]
-
+    input = args.input[0] # input nPrint file
 
     print("{}The following arguments were set:{}".format(bold,none))
+    print("{}Input file:            {}{}{}".format(bold,green,input,none))
 
 
     # Usage
-    packets = csv_to_packets(input_nprint_file)
+    packets = csv_to_packets(input)
 
 
     # Save packets to PCAP
     with PcapWriter('output.pcap', append=True, sync=True) as pcap_writer:
         for pkt in packets:
-            print(f"Writing packet: {pkt}")  # Debug: Print packet being written
+            #print(f"Writing packet: {pkt}")  # Debug: Print packet being written
             pcap_writer.write(pkt)
