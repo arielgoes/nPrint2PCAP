@@ -68,6 +68,32 @@ icmp_prefixes = {'icmp_type_':8,
 payload = {} # if "payload_<#>" columns exist, this dictionary will be dynamically populated.
 
 
+def calculate_checksum(data):
+    if len(data) % 2 == 1:
+        data += b'\x00'
+    checksum = 0
+    for i in range(0, len(data), 2):
+        word = (data[i] << 8) | data[i + 1]
+        checksum += word
+        checksum = (checksum & 0xFFFF) + (checksum >> 16)
+    return ~checksum & 0xFFFF
+
+
+def compute_ipv4_checksum(header_bytes):
+    # Zero out the checksum field
+    header_bytes = bytearray(header_bytes)
+    #print("header_bytes:",header_bytes[10:12])
+    header_bytes[10:12] = b'\x00\x00' # initially fill the IPv4 checksum field with 0x0000
+    
+    # Calculate checksum
+    checksum = calculate_checksum(header_bytes)
+    #print("Calculated Checksum:", format(checksum, '04X'))  # Format as hex with leading zeros
+    
+    # Insert checksum into header
+    header_bytes[10:12] = checksum.to_bytes(2, byteorder='big')
+    return header_bytes
+
+
 def create_byte_representation(row, prefixes: dict):
     bits = ''
     total = []
@@ -83,7 +109,9 @@ def bits_to_bytes(bits):
     if not bits:
         return b''
     #print(f"Bits: {bits}")  # Debug: Print the bits before conversion
-    return int(bits, 2).to_bytes(len(bits) // 8, byteorder='big')
+    output = int(bits, 2).to_bytes(len(bits) // 8, byteorder='big')
+    #print("output:", output)
+    return output
     
 
 def process_field(row, prefix, length):
@@ -199,7 +227,12 @@ def csv_to_packets(filename):
 
                 # Concatenate using the `+` operator
                 ipv4_header = b''.join(total)
-                
+
+                # Once we have the 'ipv4_header' fields, calculate the checksum for IPv4, but it is optional
+                if checksum_ipv4:
+                    ipv4_header = compute_ipv4_checksum(ipv4_header)
+                    #print("Header with checksum:", ipv4_header)
+
                 #########
                 ## TCP ##
                 #########
@@ -210,9 +243,15 @@ def csv_to_packets(filename):
                 tcp_header = b''.join(total)
                 #print("TCP (concatenated): ", tcp_header)
 
+                #print("TCP header bytes:", tcp_header)
+
+                # Calculate the TCP checksum
+                #if checksum_tcp:
+                #    tcp_header, checksum = compute_tcp_checksum(ipv4_header, tcp_header)
+                #    print("TCP Calculated Checksum:", format(checksum, '04X'))  # Format as hex with leading zeros
+                    
                 # payload for IPv4/TCP
                 # fill the packet with a random payload if there is none
-    
                 payload = int(process_field(row, 'ipv4_tl', 16),2) - len(ipv4_header) - len(tcp_header) # TCP payload = IPv4 total len (field) - IPv4 len - (TCP data offset * 4)
                 payload = b'\x00' * payload
 
@@ -275,6 +314,11 @@ def csv_to_packets(filename):
 
                 # Concatenate using the `+` operator
                 ipv4_header = b''.join(total)
+
+                # Once we have the 'ipv4_header' fields, calculate the checksum for IPv4, but it is optional
+                if checksum_ipv4:
+                    ipv4_header = compute_ipv4_checksum(ipv4_header)
+                    #print("Header with checksum:", ipv4_header)
                 
                 #########
                 ## UDP ##
@@ -292,13 +336,13 @@ def csv_to_packets(filename):
                 packet_data = ipv4_header + udp_header + payload
 
                 # Save the unique IPs to create ethernet header
-                prefix = 'ipv4_src_'
                 length_ip = 32
+
+                prefix = 'ipv4_src_'
                 ipv4_src = process_field(row, prefix, length_ip)
                 ipv4_src = binary_to_ipv4_string(ipv4_src)
                 #
                 prefix = 'ipv4_dst_'
-                length_ip = 32
                 ipv4_dst = process_field(row, prefix, length_ip)
                 ipv4_dst = binary_to_ipv4_string(ipv4_dst)
                 
@@ -341,6 +385,17 @@ def csv_to_packets(filename):
     return packets
 
 
+
+def calculate_checksum(data):
+    if len(data) % 2 == 1:
+        data += b'\x00'
+    checksum = 0
+    for i in range(0, len(data), 2):
+        word = data[i] << 8 | data[i + 1]
+        checksum += word
+        checksum = (checksum & 0xFFFF) + (checksum >> 16)
+    return ~checksum & 0xFFFF
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Usage of nPrint2PCAP (nPrint->PCAP) converter")
     parser.add_argument('-n', '--nprint', nargs=1, dest='input',
@@ -350,15 +405,29 @@ if __name__ == '__main__':
                         help="Specify the name of the PCAP output file to be generated.",
                         required=True,
                         default="output.pcap")
-    
+    parser.add_argument('-c4', '--checksum-ipv4', dest='checksum_ipv4',
+                        help="Specify whether to calculate the IPv4 checksum or not",
+                        action='store_true',
+                        required=False,
+                        default=False)
+    parser.add_argument('-ct', '--checksum-tcp', dest='checksum_tcp',
+                        help="Specify whether to calculate the TCP checksum or not",
+                        action='store_true',
+                        required=False,
+                        default=False)
+        
+
     args = parser.parse_args()
     input = args.input[0] # input nPrint file
     output = args.output[0] #output PCAP file
+    checksum_ipv4 = args.checksum_ipv4
+    checksum_tcp = args.checksum_tcp
 
     print("{}The following arguments were set:{}".format(bold,none))
-    print("{}Input file:            {}{}{}".format(bold,green,input,none))
-    print("{}Output file:           {}{}{}".format(bold,green,output,none))
-
+    print("{}Input file:                      {}{}{}".format(bold,green,input,none))
+    print("{}Output file:                     {}{}{}".format(bold,green,output,none))
+    print("{}Calculate checksum for IPv4      {}{}{}".format(bold,green,checksum_ipv4,none))
+    print("{}Calculate checksum for TCP       {}{}{}".format(bold,green,checksum_tcp,none))
 
     # Usage
     packets = csv_to_packets(input)
