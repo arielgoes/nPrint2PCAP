@@ -1,9 +1,19 @@
 import pandas as pd
 from scapy.all import *
+import argparse
+
+# COLORIZING
+none = '\033[0m'
+bold = '\033[01m'
+disable = '\033[02m'
+underline = '\033[04m'
+reverse = '\033[07m'
+strikethrough = '\033[09m'
+invisible = '\033[08m'
 
 eth_prefixes = {'eth_dhost_':48,
                 'eth_shost_':48,
-                'eth_ethertype_':14}
+                'eth_ethertype_':16}
 
 ipv4_prefixes = {'ipv4_ver_':4,
                     'ipv4_hl_':4,
@@ -162,7 +172,7 @@ def csv_to_packets(filename):
             ###############
             ## IPv4/TCP ##
             ##############
-            if protocols == 'ipv4_tcp_':
+            if protocols == 'ipv4_tcp_' or protocols == 'eth_ipv4_tcp_':
                 ########## 
                 ## IPv4 ##
                 ########## 
@@ -173,12 +183,12 @@ def csv_to_packets(filename):
                 # Concatenate using the `+` operator
                 ipv4_header = b''.join(total)
                 
-                # Concatenate the bits to form a minimal value that is multiple of 8 and create bytes (or bytes) from it.
-                total = create_byte_representation(row, tcp_prefixes)
-                
                 #########
                 ## TCP ##
                 #########
+                # Concatenate the bits to form a minimal value that is multiple of 8 and create bytes (or bytes) from it.
+                total = create_byte_representation(row, tcp_prefixes)
+                
                 # Concatenate using the `+` operator
                 tcp_header = b''.join(total)
                 #print("TCP (concatenated): ", tcp_header)
@@ -186,17 +196,20 @@ def csv_to_packets(filename):
                 # payload for IPv4/TCP 
                 payload = int(process_field(row, 'ipv4_tl', 16),2) - len(ipv4_header) - len(tcp_header) # TCP payload = IPv4 total len (field) - IPv4 len - (TCP data offset * 4)
                 payload = b'\x00' * payload
+
+
+                # Concatenate headers
                 packet_data = ipv4_header + tcp_header + payload
 
                 # Save the unique IPs to create ethernet header
                 prefix = 'ipv4_src_'
-                length = 32
-                ipv4_src = process_field(row, prefix, length)
+                length_ip = 32
+                ipv4_src = process_field(row, prefix, length_ip)
                 ipv4_src = binary_to_ip_string(ipv4_src)
                 #
                 prefix = 'ipv4_dst_'
-                length = 32
-                ipv4_dst = process_field(row, prefix, length)
+                length_ip = 32
+                ipv4_dst = process_field(row, prefix, length_ip)
                 ipv4_dst = binary_to_ip_string(ipv4_dst)
                 
                 # Generate a random unique MAC
@@ -211,17 +224,23 @@ def csv_to_packets(filename):
                 if ipv4_dst not in ipv4_to_mac_dict:
                     ipv4_to_mac_dict[ipv4_dst] = rnd_mac
 
-                for key, value in ipv4_to_mac_dict.items():
-                    print(key, value)
-
                 # Create packet
-                packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / Raw(load=packet_data)
+                if 'eth_' in protocols:
+                    ##############
+                    ## Ethernet ##
+                    ##############
+                    total = create_byte_representation(row, eth_prefixes)
+                    eth_header = b''.join(total)
+                    packet_data = eth_header + packet_data
+                    packet = Raw(load=packet_data)
+                else:
+                    packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / Raw(load=packet_data)
                 print("packet len:", len(packet))
 
                 #print(f"Packet: {packet}")  # Debug: Print the constructed packet
                 packets.append(packet)
             
-            elif protocols == 'ipv4_udp_':
+            elif protocols == 'ipv4_udp_' or protocols == 'eth_ipv4_udp_':
                 ########## 
                 ## IPv4 ##
                 ########## 
@@ -242,7 +261,7 @@ def csv_to_packets(filename):
                 udp_header = b''.join(total)
                 #print("TCP (concatenated): ", tcp_header)
 
-                # payload for IPv4/TCP 
+                # payload for IPv4/UDP 
                 payload = int(process_field(row, 'ipv4_tl', 16),2) - len(ipv4_header) - len(udp_header) # UDP payload = TODO
                 payload = b'\x00' * payload
                 packet_data = ipv4_header + udp_header + payload
@@ -270,17 +289,26 @@ def csv_to_packets(filename):
                 if ipv4_dst not in ipv4_to_mac_dict:
                     ipv4_to_mac_dict[ipv4_dst] = rnd_mac
 
-                for key, value in ipv4_to_mac_dict.items():
-                    print(key, value)
-
                 # Create packet
-                packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / Raw(load=packet_data)
+                if 'eth_' in protocols:
+                    ##############
+                    ## Ethernet ##
+                    ##############
+                    total = create_byte_representation(row, eth_prefixes)
+                    eth_header = b''.join(total)
+                    packet_data = eth_header + packet_data
+                    packet = Raw(load=packet_data)
+                else:
+                    packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / Raw(load=packet_data)
                 print("packet len:", len(packet))
 
                 #print(f"Packet: {packet}")  # Debug: Print the constructed packet
                 packets.append(packet)
 
-        
+            else:
+                raise ValueError(f"Invalid protocol combination: '{protocols}'.")
+
+
         except ValueError as e:
             print(f"Error processing packet for row {index}: {e}")
         except Exception as e:
@@ -289,13 +317,25 @@ def csv_to_packets(filename):
     return packets
 
 
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Usage of nPrint2PCAP (nPrint->PCAP) converter")
+    parser.add_argument('-n', '--nprint', nargs=1, dest='input',
+                        help="Specify the name of the nPrint input file.",
+                        required=True)
+    
+    args = parser.parse_args()
+    input_nprint_file = args.input[0]
 
-# Usage
-packets = csv_to_packets('./examples/port443_testing.npt')
+
+    print("{}The following arguments were set:{}".format(bold,none))
 
 
-# Save packets to PCAP
-with PcapWriter('output.pcap', append=True, sync=True) as pcap_writer:
-    for pkt in packets:
-        print(f"Writing packet: {pkt}")  # Debug: Print packet being written
-        pcap_writer.write(pkt)
+    # Usage
+    packets = csv_to_packets(input_nprint_file)
+
+
+    # Save packets to PCAP
+    with PcapWriter('output.pcap', append=True, sync=True) as pcap_writer:
+        for pkt in packets:
+            print(f"Writing packet: {pkt}")  # Debug: Print packet being written
+            pcap_writer.write(pkt)
