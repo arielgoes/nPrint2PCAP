@@ -1,5 +1,5 @@
 import pandas as pd
-from scapy.all import Ether, Raw, PcapWriter, random
+from scapy.all import *
 import argparse
 
 # COLORIZING
@@ -87,7 +87,7 @@ def compute_ipv4_checksum(header_bytes):
     
     # Calculate checksum
     checksum = calculate_checksum(header_bytes)
-    #print("Calculated Checksum:", format(checksum, '04X'))  # Format as hex with leading zeros
+    #print("Calculated Checksum (IPv4):", format(checksum, '04X'))  # Format as hex with leading zeros
     
     # Insert checksum into header
     header_bytes[10:12] = checksum.to_bytes(2, byteorder='big')
@@ -227,6 +227,11 @@ def csv_to_packets(filename):
 
                 # Concatenate using the `+` operator
                 ipv4_header = b''.join(total)
+                #print("ipv4 header:", bytearray(ipv4_header))
+
+                #ipv4_header = bytearray(ipv4_header)
+                #print("header_bytes:",header_bytes[10:12])
+                #ipv4_header[10:12] = b'\x00\x00' # initially fill the IPv4 checksum field with 0x0000
 
                 # Once we have the 'ipv4_header' fields, calculate the checksum for IPv4, but it is optional
                 if checksum_ipv4:
@@ -241,19 +246,18 @@ def csv_to_packets(filename):
                 
                 # Concatenate using the `+` operator
                 tcp_header = b''.join(total)
-                #print("TCP (concatenated): ", tcp_header)
 
-                #print("TCP header bytes:", tcp_header)
-
-                # Calculate the TCP checksum
-                #if checksum_tcp:
-                #    tcp_header, checksum = compute_tcp_checksum(ipv4_header, tcp_header)
-                #    print("TCP Calculated Checksum:", format(checksum, '04X'))  # Format as hex with leading zeros
                     
                 # payload for IPv4/TCP
                 # fill the packet with a random payload if there is none
                 payload = int(process_field(row, 'ipv4_tl', 16),2) - len(ipv4_header) - len(tcp_header) # TCP payload = IPv4 total len (field) - IPv4 len - (TCP data offset * 4)
                 payload = b'\x00' * payload
+
+                #print("payload:", bytearray(payload))
+
+                tcp_header = bytearray(tcp_header)
+                tcp_header[16:18] = b'\x00\x00' # force the TCP checksum field to start with zeros
+                #print("TCP header bytes:", tcp_header)
 
                 # Concatenate headers
                 packet_data = ipv4_header + tcp_header + payload
@@ -291,7 +295,18 @@ def csv_to_packets(filename):
                     packet_data = eth_header + packet_data
                     packet = Raw(load=packet_data)
                 else:
-                    packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / Raw(load=packet_data)
+                    packet = IP(ipv4_header) / TCP(tcp_header) / Raw(load=payload)
+                    packet_raw = raw(packet)
+                    tcp_raw = packet_raw[20:]
+
+                    # Calculate the TCP checksum
+                    if checksum_tcp:
+                        tcp_chksum = in4_chksum(socket.IPPROTO_TCP, packet[IP], tcp_raw)  # For more infos, call "help(in4_chksum)"
+                        #print("TCP Checksum: ", hex(tcp_chksum))
+                        packet[TCP].chksum = tcp_chksum
+                    
+                    packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / packet
+                    
                 #print("packet len:", len(packet))
 
                 #print(f"Packet: {packet}")  # Debug: Print the constructed packet
@@ -385,17 +400,6 @@ def csv_to_packets(filename):
     return packets
 
 
-
-def calculate_checksum(data):
-    if len(data) % 2 == 1:
-        data += b'\x00'
-    checksum = 0
-    for i in range(0, len(data), 2):
-        word = data[i] << 8 | data[i + 1]
-        checksum += word
-        checksum = (checksum & 0xFFFF) + (checksum >> 16)
-    return ~checksum & 0xFFFF
-
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Usage of nPrint2PCAP (nPrint->PCAP) converter")
     parser.add_argument('-n', '--nprint', nargs=1, dest='input',
@@ -431,6 +435,7 @@ if __name__ == '__main__':
 
     # Usage
     packets = csv_to_packets(input)
+    #print("packets:", packets)
 
     # Save packets to PCAP
     with PcapWriter(output, append=True, sync=True) as pcap_writer:
