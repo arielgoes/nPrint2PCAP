@@ -13,10 +13,20 @@ This error may (or may not) occur with different nprint files.
 
 For instance, it does happens with [`port80.pcap`](https://github.com/arielgoes/nprint_to_pcap/tree/main/examples/port80.pcap) file if we try to rebuild it into a PCAP file, but it does not happen to [`port443.pcap`](https://github.com/arielgoes/nprint_to_pcap/blob/main/examples/port443.pcap).
 
-We assume all nPrint files are being generated as follows:
+Currently, our tool supports the following protocols and cases:
+* IPv4/TCP
+* IPv4/UDP
+
+Note: if your input nPrint file contains the flag `-e`, we parse the Ethernet protocol fields with the columns containing `eth_`. Otherwise, MAC addresses are uniquely assigned to each IP throughout the file.
+
+In addition, the checksum is optional. This happens because there is no need to recalculate if the input nPrint file has the correct checksums (for example, IPv4, TCP, UDP). If you want to use the following flags individually (or together):
+* `-4` or `--checksum-ipv4` to calculate the IPv4 checksum
+* `-t` or `--checksum-tcp` to calculate the TCP checksum
+* `-u` or `--checksum-udp` to calculate the UDP checksum
+
+Finally, the PCAP filename to be generated is mandatory after the flag `-o` or `--output`.
+
+Usage: 
 ```
-nprint -F -1 -P <filename>.pcap -i -u -t -4 -6 -p 0 -O 4 -W <filename>.npt -S
+python nPrint2PCAP_scapy_version.py -n examples/Skype_6_testing_UDP_packet.npt -o Sykpe_6_testing_UDP_packet.pcap -u
 ```
-
-
-
