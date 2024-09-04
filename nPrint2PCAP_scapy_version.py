@@ -394,7 +394,7 @@ def csv_to_packets(filename):
                         
                         # Calculate the checksum
                         udp_chksum = in4_chksum(socket.IPPROTO_UDP, packet[IP], udp_raw)  # For more infos, call "help(in4_chksum)"
-                        print("UDP Checksum: ", hex(udp_chksum))
+                        #print("UDP Checksum: ", hex(udp_chksum))
                         packet[UDP].chksum = udp_chksum
                     
                     packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / packet
