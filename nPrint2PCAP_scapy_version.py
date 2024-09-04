@@ -246,18 +246,11 @@ def csv_to_packets(filename):
                 
                 # Concatenate using the `+` operator
                 tcp_header = b''.join(total)
-
                     
                 # payload for IPv4/TCP
                 # fill the packet with a random payload if there is none
                 payload = int(process_field(row, 'ipv4_tl', 16),2) - len(ipv4_header) - len(tcp_header) # TCP payload = IPv4 total len (field) - IPv4 len - (TCP data offset * 4)
                 payload = b'\x00' * payload
-
-                #print("payload:", bytearray(payload))
-
-                tcp_header = bytearray(tcp_header)
-                tcp_header[16:18] = b'\x00\x00' # force the TCP checksum field to start with zeros
-                #print("TCP header bytes:", tcp_header)
 
                 # Concatenate headers
                 packet_data = ipv4_header + tcp_header + payload
@@ -295,16 +288,21 @@ def csv_to_packets(filename):
                     packet_data = eth_header + packet_data
                     packet = Raw(load=packet_data)
                 else:
+                    if checksum_tcp:
+                        tcp_header = bytearray(tcp_header)
+                        tcp_header[16:18] = b'\x00\x00' # force the TCP checksum field to start with zeros
+                        #print("TCP header bytes:", tcp_header)
+
                     packet = IP(ipv4_header) / TCP(tcp_header) / Raw(load=payload)
-                    packet_raw = raw(packet)
-                    tcp_raw = packet_raw[20:]
 
                     # Calculate the TCP checksum
                     if checksum_tcp:
+                        packet_raw = raw(packet)
+                        tcp_raw = packet_raw[20:]
                         tcp_chksum = in4_chksum(socket.IPPROTO_TCP, packet[IP], tcp_raw)  # For more infos, call "help(in4_chksum)"
                         #print("TCP Checksum: ", hex(tcp_chksum))
                         packet[TCP].chksum = tcp_chksum
-                    
+
                     packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / packet
                     
                 #print("packet len:", len(packet))
@@ -383,7 +381,23 @@ def csv_to_packets(filename):
                     packet_data = eth_header + packet_data
                     packet = Raw(load=packet_data)
                 else:
-                    packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / Raw(load=packet_data)
+                    if checksum_udp:
+                        # Set the checksum field to zero (2 bytes) in udp_header
+                        udp_header = udp_header[:6] + b'\x00\x00' + udp_header[8:]
+                    #packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / Raw(load=packet_data)
+                    packet = IP(ipv4_header) / UDP(udp_header) / Raw(load=payload)
+
+                    # Calculate the UDP checksum
+                    if checksum_udp:
+                        packet_raw = raw(packet)
+                        udp_raw = packet_raw[20:]
+                        
+                        # Calculate the checksum
+                        udp_chksum = in4_chksum(socket.IPPROTO_UDP, packet[IP], udp_raw)  # For more infos, call "help(in4_chksum)"
+                        print("UDP Checksum: ", hex(udp_chksum))
+                        packet[UDP].chksum = udp_chksum
+                    
+                    packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / packet
                 #print("packet len:", len(packet))
 
                 #print(f"Packet: {packet}")  # Debug: Print the constructed packet
@@ -409,29 +423,36 @@ if __name__ == '__main__':
                         help="Specify the name of the PCAP output file to be generated.",
                         required=True,
                         default="output.pcap")
-    parser.add_argument('-c4', '--checksum-ipv4', dest='checksum_ipv4',
+    parser.add_argument('-4', '--checksum-ipv4', dest='checksum_ipv4',
                         help="Specify whether to calculate the IPv4 checksum or not",
                         action='store_true',
                         required=False,
                         default=False)
-    parser.add_argument('-ct', '--checksum-tcp', dest='checksum_tcp',
+    parser.add_argument('-t', '--checksum-tcp', dest='checksum_tcp',
                         help="Specify whether to calculate the TCP checksum or not",
                         action='store_true',
                         required=False,
                         default=False)
-        
+    parser.add_argument('-u', '--checksum-udp', dest='checksum_udp',
+                        help="Specify whether to calculate the UDP checksum or not",
+                        action='store_true',
+                        required=False,
+                        default=False)
 
     args = parser.parse_args()
+    
     input = args.input[0] # input nPrint file
     output = args.output[0] #output PCAP file
     checksum_ipv4 = args.checksum_ipv4
     checksum_tcp = args.checksum_tcp
+    checksum_udp = args.checksum_udp
 
     print("{}The following arguments were set:{}".format(bold,none))
     print("{}Input file:                      {}{}{}".format(bold,green,input,none))
     print("{}Output file:                     {}{}{}".format(bold,green,output,none))
     print("{}Calculate checksum for IPv4      {}{}{}".format(bold,green,checksum_ipv4,none))
     print("{}Calculate checksum for TCP       {}{}{}".format(bold,green,checksum_tcp,none))
+    print("{}Calculate checksum for UDP       {}{}{}".format(bold,green,checksum_udp,none))
 
     # Usage
     packets = csv_to_packets(input)
