@@ -170,6 +170,46 @@ def verify_set_protocols(row, df, prefix_list) -> str:
     return protocols
 
 
+def find_malformed_columns(df):
+    # Define the substrings we're interested in
+    substrings = ["eth_", "ipv4_", "ipv6_", "tcp_", "udp_", "icmp_", "wlan_", "payload_", "radiotap_"]
+    
+    # Find all columns that match any of these substrings
+    columns_of_interest = [col for col in df.columns if any(sub in col for sub in substrings)]
+    #print("len cols:", len(columns_of_interest))
+    
+    # Store columns that have invalid patterns
+    malformed_columns = []
+    
+    # Check for malformed sequences
+    for i in range(1, len(columns_of_interest) - 1):
+        col_prev = columns_of_interest[i - 1]
+        col_curr = columns_of_interest[i]
+        col_next = columns_of_interest[i + 1]
+        
+        values_prev = df[col_prev].values
+        values_curr = df[col_curr].values
+        values_next = df[col_next].values
+
+        #print("prev, curr, next:", values_prev, values_curr, values_next)
+        
+        for row_idx in range(len(values_curr)):
+            if values_curr[row_idx] == -1 and (values_prev[row_idx] != -1 and values_next[row_idx] != -1):
+                print(f"Malformed sequence detected at row {row_idx} between columns '{col_prev}', '{col_curr}', '{col_next}'")
+                malformed_columns.append((row_idx, col_prev, col_curr, col_next,
+                                          values_prev[row_idx], values_curr[row_idx], values_next[row_idx]))
+    
+    # Print the malformed columns
+    if malformed_columns:
+        print("Malformed sequences found:")
+        for row_idx, col_prev, col_curr, col_next, values_prev[row_idx], values_curr[row_idx], values_next[row_idx] in malformed_columns:
+            print(f"Row {row_idx}: {col_prev}, {col_curr}, {col_next}, {values_prev[row_idx]}, {values_curr[row_idx]}, {values_next[row_idx]}")
+        return True
+    else:
+        print("No malformed sequences found.")
+        return False
+    
+
 def csv_to_packets(filename):
 
     #print(df.shape[0]) # df.shape: (lines, columns)
@@ -184,11 +224,18 @@ def csv_to_packets(filename):
     if len(df) < min_lines:
         raise ValueError(f"File '{filename}' has fewer than {min_lines} lines.")
     first_line = df.iloc[0, 0]
-    if first_line.isdigit():
-        raise ValueError(f"File '{filename}' is malformed: First line should not start with a number.")
+    #if first_line.isdigit():
+    #    raise ValueError(f"File '{filename}' is malformed: First line should not start with a number.")
     
-    total_lines = df.shape[0]
+    # Check for invalid cases in the nPrint input file: | ,0,-1,0 | ,0,-1,1 | ,1,-1,0 | ,1,-1,1
+    if verify_nprint:
+        if find_malformed_columns(df):
+            print(f"nPrint input file malformed!")
+            sys.exit(1)
 
+    sys.exit(0)
+
+    total_lines = df.shape[0]
     packets = []
     rnd_mac_unique = []
     ipv4_to_mac_dict = {}
@@ -438,6 +485,11 @@ if __name__ == '__main__':
                         action='store_true',
                         required=False,
                         default=False)
+    parser.add_argument('-v', '--verify-nprint', dest='verify_nprint',
+                        help="Specify whether to verify the nPrint input file malformation or not",
+                        action='store_true',
+                        required=False,
+                        default=False)
 
     args = parser.parse_args()
     
@@ -446,6 +498,7 @@ if __name__ == '__main__':
     checksum_ipv4 = args.checksum_ipv4
     checksum_tcp = args.checksum_tcp
     checksum_udp = args.checksum_udp
+    verify_nprint = args.verify_nprint
 
     print("{}The following arguments were set:{}".format(bold,none))
     print("{}Input file:                      {}{}{}".format(bold,green,input,none))
@@ -453,6 +506,7 @@ if __name__ == '__main__':
     print("{}Calculate checksum for IPv4      {}{}{}".format(bold,green,checksum_ipv4,none))
     print("{}Calculate checksum for TCP       {}{}{}".format(bold,green,checksum_tcp,none))
     print("{}Calculate checksum for UDP       {}{}{}".format(bold,green,checksum_udp,none))
+    print("{}Check nPrint file malformation   {}{}{}".format(bold,green,verify_nprint,none))
 
     # Usage
     packets = csv_to_packets(input)
