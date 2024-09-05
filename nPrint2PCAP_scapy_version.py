@@ -170,13 +170,15 @@ def verify_set_protocols(row, df, prefix_list) -> str:
     return protocols
 
 
-def find_malformed_columns(df):
+def find_malformed_columns_old(df):
     # Define the substrings we're interested in
     substrings = ["eth_", "ipv4_", "ipv6_", "tcp_", "udp_", "icmp_", "wlan_", "payload_", "radiotap_"]
     
+    # Create a mapping of columns to their substrings
+    col_substring_map = {col: sub for sub in substrings for col in df.columns if sub in col}
+    
     # Find all columns that match any of these substrings
     columns_of_interest = [col for col in df.columns if any(sub in col for sub in substrings)]
-    #print("len cols:", len(columns_of_interest))
     
     # Store columns that have invalid patterns
     malformed_columns = []
@@ -191,24 +193,73 @@ def find_malformed_columns(df):
         values_curr = df[col_curr].values
         values_next = df[col_next].values
 
-        #print("prev, curr, next:", values_prev, values_curr, values_next)
-        
         for row_idx in range(len(values_curr)):
             if values_curr[row_idx] == -1 and (values_prev[row_idx] != -1 and values_next[row_idx] != -1):
-                print(f"Malformed sequence detected at row {row_idx} between columns '{col_prev}', '{col_curr}', '{col_next}'")
                 malformed_columns.append((row_idx, col_prev, col_curr, col_next,
                                           values_prev[row_idx], values_curr[row_idx], values_next[row_idx]))
     
     # Print the malformed columns
     if malformed_columns:
         print("Malformed sequences found:")
-        for row_idx, col_prev, col_curr, col_next, values_prev[row_idx], values_curr[row_idx], values_next[row_idx] in malformed_columns:
-            print(f"Row {row_idx}: {col_prev}, {col_curr}, {col_next}, {values_prev[row_idx]}, {values_curr[row_idx]}, {values_next[row_idx]}")
-        return True
+        for row_idx, col_prev, col_curr, col_next, val_prev, val_curr, val_next, in malformed_columns:
+            print(f"Row {row_idx}: ({col_prev}): {val_prev}, ({col_curr}): {val_curr}, ({col_next}): {val_next}")
     else:
         print("No malformed sequences found.")
-        return False
+
+    #print("len malformed", len(malformed_columns))
+    #print(type(malformed_columns))
+    print(malformed_columns[0])
+
+    #print(df.loc[[2275]])
+    #print(df.loc[2275,'ipv4_tl_15'])
     
+
+def find_malformed_columns(df):
+    # Define the substrings we're interested in
+    substrings = ["eth_", "ipv4_", "ipv6_", "tcp_", "udp_", "icmp_", "wlan_", "radiotap_"] # we ignore 'payload_' since nPrint 1.2.1 fills with -1 anyway.
+    
+    # Find all columns that match any of these substrings
+    columns_of_interest = [col for col in df.columns if any(sub in col for sub in substrings)]
+    
+    # Initialize the dictionary to store occurrences by row
+    row_occurrences = {}
+    
+    # Check for malformed sequences
+    for i in range(1, len(columns_of_interest) - 1):
+        col_prev = columns_of_interest[i - 1]
+        col_curr = columns_of_interest[i]
+        col_next = columns_of_interest[i + 1]
+        
+        values_prev = df[col_prev].values
+        values_curr = df[col_curr].values
+        values_next = df[col_next].values
+
+        for row_idx in range(len(values_curr)):
+            if values_curr[row_idx] == -1 and (values_prev[row_idx] != -1 and values_next[row_idx] != -1):
+                # Append occurrence to the dictionary
+                if row_idx not in row_occurrences:
+                    row_occurrences[row_idx] = []
+                row_occurrences[row_idx].append([
+                    col_prev,
+                    col_curr,
+                    col_next,
+                    values_prev[row_idx],
+                    values_curr[row_idx],
+                    values_next[row_idx]])
+    
+    # Print the malformed occurrences by row
+    if row_occurrences:
+        for row_idx, occurrences in row_occurrences.items():
+            print(row_idx, occurrences)
+        print("ERROR: Malformed sequences by rows above.")
+        return True
+    else:
+        print("No malformed sequences found :)")
+        return False
+
+    #print("malformed 2275:", row_occurrences[2275])
+
+
 
 def csv_to_packets(filename):
 
@@ -230,10 +281,8 @@ def csv_to_packets(filename):
     # Check for invalid cases in the nPrint input file: | ,0,-1,0 | ,0,-1,1 | ,1,-1,0 | ,1,-1,1
     if verify_nprint:
         if find_malformed_columns(df):
-            print(f"nPrint input file malformed!")
             sys.exit(1)
 
-    sys.exit(0)
 
     total_lines = df.shape[0]
     packets = []
