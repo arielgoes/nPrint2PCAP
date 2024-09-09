@@ -23,10 +23,11 @@ In addition, the checksum is optional. This happens because there is no need to 
 * `-4` or `--checksum-ipv4` to calculate the IPv4 checksum
 * `-t` or `--checksum-tcp` to calculate the TCP checksum
 * `-u` or `--checksum-udp` to calculate the UDP checksum
+* `-v` or `--verify-nprint` to verify and correct malformed columns: (i) ...,`0,-1,0`, ...,`0,-1,1`, ...,`1,-1,0`, and/or ...,`1,-1,1` cases; (ii) correct IPv4 type; (iii) correct IPv4/TCP/UDP total length, and other fields
+* `-o` or `--output` the PCAP filename to be generated is mandatory after this flag - e.g., python nPrint2PCAP... -o <filename>.pcap
 
-Finally, the PCAP filename to be generated is mandatory after the flag `-o` or `--output`.
 
 Usage: 
 ```
-python nPrint2PCAP_scapy_version.py -n examples/Skype_6_testing_UDP_packet.npt -o Sykpe_6_testing_UDP_packet.pcap -u
+python nPrint2PCAP_scapy_version.py -n examples/<filename>.npt -o <filename>.pcap -u -t -4 -v
 ```
