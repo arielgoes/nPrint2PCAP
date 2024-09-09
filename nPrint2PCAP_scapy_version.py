@@ -165,6 +165,42 @@ def binary_to_ipv4_string(binary_ip):
   return ip_string
 
 
+def binary_to_port_string(binary_port):
+    """Converts a 16-bit binary port to its decimal string representation.
+    Raises:
+        ValueError: If the binary port is not 16 bits long.
+    """
+    if len(binary_port) != 16:
+        raise ValueError("Binary port must be 16 bits long")
+
+    # Convert the 16-bit binary port to its decimal equivalent
+    port_number = int(binary_port, 2)
+
+    return str(port_number)
+
+
+def verify_set_ports(row, df, prefix_list) -> str:
+    """Checks and converts binary port values for TCP and UDP protocols.
+    Arguments:
+        row: The current row in the DataFrame.
+        df: The DataFrame containing the protocol data.
+        prefix_list: List of protocol prefixes (e.g., ['tcp_', 'udp_']).
+    
+    Returns:
+        ports: A string representing the set ports for TCP or UDP protocols.
+    """
+    ports = ''
+    for prefix in prefix_list:
+        cols = df.columns[df.columns.str.contains(prefix)]
+        if len(cols) > 0:
+            first_col_with_substring = cols[0]
+            if str(row[first_col_with_substring]) != str(-1):
+                # Assuming the next 16 columns represent the port number in binary (e.g., tcp_port_0 to tcp_port_15)
+                binary_port = ''.join([str(row[col]) for col in cols[:16]])
+                ports += f"{prefix}port:{binary_to_port_string(binary_port)} "
+    return ports.strip()
+
+
 def verify_set_protocols(row, df, prefix_list) -> str:
     protocols=''
     for prefix in prefix_list:
@@ -228,7 +264,7 @@ def ipv4_header_negative_removal(df):
 
 def protocol_determination(df):
     protocols = ["tcp", "udp", "icmp"]
-    percentages = {}
+    percentages_proto = {}
 
     # Iterate over the protocols
     for protocol in protocols:
@@ -243,21 +279,21 @@ def protocol_determination(df):
 
         # Calculate percentage and store in the dictionary
         if total_count > 0:
-            percentages[protocol] = (non_negative_count / total_count) * 100
+            percentages_proto[protocol] = (non_negative_count / total_count) * 100
         else:
-            percentages[protocol] = 0
+            percentages_proto[protocol] = 0
 
     # Find protocol with the highest percentage of non-negative values
-    max_protocol = max(percentages, key=percentages.get)
+    max_protocol = max(percentages_proto, key=percentages_proto.get)
     return max_protocol
 
 
-def ipv4_pro_formatting(df):
+def ipv4_pro_formatting(df, dominating_protocol):
     #following is placeholder, how do we get payload size?:
     # Define the substrings that have static values, e.g., ip version = 4
 
     # Call the function to determine the protocol
-    dominating_protocol = protocol_determination(df)
+    #dominating_protocol = protocol_determination(df)
     print(dominating_protocol)
     # tcp = 0,0,0,0,0,1,1,0
     # udp = 0,0,0,1,0,0,0,1
@@ -648,14 +684,16 @@ def ipv4_tl_formatting_udp(df):
 
 def verify_and_correct_fields(df):
     ##### IPv4
+    # assuming IPv4 so far, the function below finds out if most of the fields are enabled (i.e., != -1) for TCP or UDP
+    dominating_protocol = protocol_determination(df)
+    
     df = ipv4_ver_formatting(df) # we are using ipv4 only
-    df = ipv4_header_negative_removal(df) # here we make sure minimum ipv4 header size is achieved - no missing ipv4 header fields, random int is assigned as the fields largely are correct due to diffusion    
-    df = ipv4_pro_formatting(df) # this is less flexible -> choose protocol with most percentage of non negatives excluding option, and change all non-determined-protocol fields to -1
+    df = ipv4_header_negative_removal(df) # here we make sure minimum ipv4 header size is achieved - no missing ipv4 header fields, random int is assigned as the fields largely are correct due to timeVAE
+    df = ipv4_pro_formatting(df, dominating_protocol) # this is less flexible -> choose protocol with most percentage of non negatives excluding option, and change all non-determined-protocol fields to -1
     df = ipv4_option_removal(df) # mordern Internet rarely uses ipv4 options is used at all, from the data we observe ipv4 options are never present due to it being obsolete
     df = ipv4_ttl_ensure(df) # ensure ttl > 0
     df = ipv4_hl_formatting(df) # ipv4 header length formatting (this is computation based so we do not have flexibility here), need to be done after all other ipv4 fields are formatted
 
-    dominating_protocol = protocol_determination(df)
 
     if dominating_protocol == 'tcp':
         df = tcp_header_negative_removal(df)
@@ -701,13 +739,60 @@ def verify_and_correct_fields(df):
                     values_curr[row_idx],
                     values_next[row_idx]])
     
-    # Print the malformed occurrences by row
+    # Print the malformed occurrences by row (if any)
     if row_occurrences:
         #for row_idx, occurrences in row_occurrences.items():
         #    print(row_idx, occurrences)
         print(f'ERROR: Malformed sequences by rows above. There are {len(row_occurrences)} malformed rows!!')
+        sys.exit(0)
     else:
         print("No malformed sequences found :)")
+
+    return df, dominating_protocol
+
+
+def add_flow_column(df, dominating_protocol):
+    # placeholder port for ICMP
+    placeholder = '70000'
+    
+    # Initialize an empty list to store the 'flow' column values
+    flow_column = []
+    
+    # Iterate over each row in the DataFrame
+    for index, row in df.iterrows():
+        # Retrieve 'src_ip' and 'dst_ip' (only works for IPv4 so far)
+        src_ip = process_field(row, 'ipv4_src_', 32)
+        dst_ip = process_field(row, 'ipv4_dst_', 32)
+        src_ip = binary_to_ipv4_string(src_ip)
+        dst_ip = binary_to_ipv4_string(dst_ip)
+
+        # Retrieve 'src_port' and 'dst_port' based on the dominant protocol
+        if dominating_protocol == 'tcp':
+            src_port = process_field(row, 'tcp_sprt_', 16)
+            dst_port = process_field(row, 'tcp_dprt_', 16)
+            src_port = binary_to_port_string(src_port)
+            dst_port = binary_to_port_string(dst_port)
+        elif dominating_protocol == 'udp':
+            src_port = process_field(row, 'udp_sport_', 16)
+            dst_port = process_field(row, 'udp_dport_', 16)
+            src_port = binary_to_port_string(src_port)
+            dst_port = binary_to_port_string(dst_port)
+        elif dominating_protocol == 'icmp':  # ICMP has no ports
+            src_port = placeholder
+            dst_port = placeholder
+
+        # Create the 5-tuple string
+        final_string = f"{src_ip}_{dst_ip}_{src_port}_{dst_port}_{dominating_protocol}"
+
+        # Append the 5-tuple string to the list
+        flow_column.append(final_string)
+    
+
+    # Drop any 'Unamed <#>' columns
+    df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+
+    # Insert the 'flow' column to the leftmost position in the DataFrame
+    df.insert(0, 'flow', flow_column)
 
     return df
 
@@ -729,12 +814,22 @@ def csv_to_packets(filename):
     #if first_line.isdigit():
     #    raise ValueError(f"File '{filename}' is malformed: First line should not start with a number.")
     
-    # Check for invalid cases in the nPrint input file: | ,0,-1,0 | ,0,-1,1 | ,1,-1,0 | ,1,-1,1
+    # Check/correct for invalid cases in the nPrint input file: | ,0,-1,0 | ,0,-1,1 | ,1,-1,0 | ,1,-1,1
     if verify_nprint:
-        verify_and_correct_fields(df)
+        df, dominating_protocol = verify_and_correct_fields(df)
 
-    #sys.exit()
+        # assuming a dominant protocol for the entire nPrint file (as NetDiffusion did), let us do the same here
 
+        # add 'flow' as first column. Same as '-O 4' argument in nPrint
+        df = add_flow_column(df, dominating_protocol)
+
+        #sys.exit(0)
+
+        # Modify the filename by appending "_corrected" before the extension
+        output_filename = input.replace(".npt", "_corrected.npt")
+
+        # Save the DataFrame to the modified filename
+        df.to_csv(output_filename, index=False)
 
     total_lines = df.shape[0]
     packets = []
@@ -972,22 +1067,22 @@ if __name__ == '__main__':
                         required=True,
                         default="output.pcap")
     parser.add_argument('-4', '--checksum-ipv4', dest='checksum_ipv4',
-                        help="Specify whether to calculate the IPv4 checksum or not",
+                        help="Calculate the IPv4 checksum",
                         action='store_true',
                         required=False,
                         default=False)
     parser.add_argument('-t', '--checksum-tcp', dest='checksum_tcp',
-                        help="Specify whether to calculate the TCP checksum or not",
+                        help="Calculate the TCP checksum",
                         action='store_true',
                         required=False,
                         default=False)
     parser.add_argument('-u', '--checksum-udp', dest='checksum_udp',
-                        help="Specify whether to calculate the UDP checksum or not",
+                        help="Calculate the UDP checksum",
                         action='store_true',
                         required=False,
                         default=False)
     parser.add_argument('-v', '--verify-nprint', dest='verify_nprint',
-                        help="Specify whether to verify the nPrint input file malformation or not",
+                        help="Verify and correct the nPrint input file malformation",
                         action='store_true',
                         required=False,
                         default=False)
@@ -1001,13 +1096,13 @@ if __name__ == '__main__':
     checksum_udp = args.checksum_udp
     verify_nprint = args.verify_nprint
 
-    print("{}The following arguments were set:{}".format(bold,none))
-    print("{}Input file:                      {}{}{}".format(bold,green,input,none))
-    print("{}Output file:                     {}{}{}".format(bold,green,output,none))
-    print("{}Calculate checksum for IPv4      {}{}{}".format(bold,green,checksum_ipv4,none))
-    print("{}Calculate checksum for TCP       {}{}{}".format(bold,green,checksum_tcp,none))
-    print("{}Calculate checksum for UDP       {}{}{}".format(bold,green,checksum_udp,none))
-    print("{}Check nPrint file malformation   {}{}{}".format(bold,green,verify_nprint,none))
+    print("{}The following arguments were set:            {}".format(bold,none))
+    print("{}Input file:                                  {}{}{}".format(bold,green,input,none))
+    print("{}Output file:                                 {}{}{}".format(bold,green,output,none))
+    print("{}Calculate checksum for IPv4                  {}{}{}".format(bold,green,checksum_ipv4,none))
+    print("{}Calculate checksum for TCP                   {}{}{}".format(bold,green,checksum_tcp,none))
+    print("{}Calculate checksum for UDP                   {}{}{}".format(bold,green,checksum_udp,none))
+    print("{}Check and correct nPrint file malformation   {}{}{}".format(bold,green,verify_nprint,none))
 
     # Usage
     packets = csv_to_packets(input)
