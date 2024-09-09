@@ -23,7 +23,7 @@ In addition, the checksum is optional. This happens because there is no need to 
 * `-4` or `--checksum-ipv4` to calculate the IPv4 checksum
 * `-t` or `--checksum-tcp` to calculate the TCP checksum
 * `-u` or `--checksum-udp` to calculate the UDP checksum
-* `-v` or `--verify-nprint` to verify and correct malformed columns: (i) ...,`0,-1,0`, ...,`0,-1,1`, ...,`1,-1,0`, and/or ...,`1,-1,1` cases; (ii) correct IPv4 type; (iii) correct IPv4/TCP/UDP total length, and other fields
+* `-v` or `--verify-nprint` to verify and correct malformed columns: (i) ...,`0,-1,0`, ...,`0,-1,1`, ...,`1,-1,0`, and/or ...,`1,-1,1` cases; (ii) correct IPv4 type; (iii) correct IPv4/TCP/UDP total length, and other fields. NOTE: Some functions were adapted from [NetDiffusion reconstructions script](https://github.com/noise-lab/NetDiffusion_Generator/blob/main/post-generation/reconstruction.py)
 * `-o` or `--output` the PCAP filename to be generated is mandatory after this flag - e.g., python nPrint2PCAP... -o <filename>.pcap
 
 
