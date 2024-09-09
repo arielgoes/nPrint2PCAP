@@ -1,6 +1,8 @@
 import pandas as pd
 from scapy.all import *
 import argparse
+import numpy as np
+import math
 
 # COLORIZING
 none = '\033[0m'
@@ -66,6 +68,12 @@ icmp_prefixes = {'icmp_type_':8,
                     'icmp_roh_':32}
 
 payload = {} # if "payload_<#>" columns exist, this dictionary will be dynamically populated.
+
+
+def binary_to_decimal(binary_list):
+    """Convert a binary list representation to its decimal equivalent."""
+    binary_str = ''.join(map(str, binary_list))
+    return int(binary_str, 2)
 
 
 def calculate_checksum(data):
@@ -170,51 +178,497 @@ def verify_set_protocols(row, df, prefix_list) -> str:
     return protocols
 
 
-def find_malformed_columns_old(df):
-    # Define the substrings we're interested in
-    substrings = ["eth_", "ipv4_", "ipv6_", "tcp_", "udp_", "icmp_", "wlan_", "payload_", "radiotap_"]
-    
-    # Create a mapping of columns to their substrings
-    col_substring_map = {col: sub for sub in substrings for col in df.columns if sub in col}
-    
-    # Find all columns that match any of these substrings
-    columns_of_interest = [col for col in df.columns if any(sub in col for sub in substrings)]
-    
-    # Store columns that have invalid patterns
-    malformed_columns = []
-    
-    # Check for malformed sequences
-    for i in range(1, len(columns_of_interest) - 1):
-        col_prev = columns_of_interest[i - 1]
-        col_curr = columns_of_interest[i]
-        col_next = columns_of_interest[i + 1]
-        
-        values_prev = df[col_prev].values
-        values_curr = df[col_curr].values
-        values_next = df[col_next].values
+def ipv4_ver_formatting(df):
+    #following is placeholder, how do we get payload size?:
+    # Define the substrings that have static values, e.g., ip version = 4
+    fields = ["ipv4_ver_"]
+    matching_columns = df.filter(like="ipv4_ver_").columns
+    #print("matching columns: ", matching_columns)
 
-        for row_idx in range(len(values_curr)):
-            if values_curr[row_idx] == -1 and (values_prev[row_idx] != -1 and values_next[row_idx] != -1):
-                malformed_columns.append((row_idx, col_prev, col_curr, col_next,
-                                          values_prev[row_idx], values_curr[row_idx], values_next[row_idx]))
-    
-    # Print the malformed columns
-    if malformed_columns:
-        print("Malformed sequences found:")
-        for row_idx, col_prev, col_curr, col_next, val_prev, val_curr, val_next, in malformed_columns:
-            print(f"Row {row_idx}: ({col_prev}): {val_prev}, ({col_curr}): {val_curr}, ({col_next}): {val_next}")
-    else:
-        print("No malformed sequences found.")
+    # Iterate over the columns of the source DataFrame
+    for column in matching_columns:
+        # Check if the substring exists in the column name
+        for field in fields:
+            if field in column:
+                # limited to ipv4
+                if '0' in column:
+                    df[column] = 0
+                elif '1' in column:
+                    df[column] = 1
+                elif '2' in column:
+                    df[column] = 0
+                else:
+                    df[column] = 0
+    return df
 
-    #print("len malformed", len(malformed_columns))
-    #print(type(malformed_columns))
-    print(malformed_columns[0])
 
-    #print(df.loc[[2275]])
-    #print(df.loc[2275,'ipv4_tl_15'])
-    
+def ipv4_header_negative_removal(df):
+    fields = ["ipv4"]
+    matching_columns = df.filter(like="ipv4").columns
 
-def find_malformed_columns(df):
+    # Function to apply to each cell
+    def replace_negative_one(val):
+        if val == -1:
+            return np.random.randint(0, 2)  # Generates either 0 or 1
+        else:
+            return val
+
+    # Iterate over the columns of the source DataFrame
+    for column in matching_columns:
+        # Check if the substring exists in the column name
+        for field in fields:
+            #if field in column:
+            if field in column and 'opt' not in column:
+                df[column] = df[column].apply(replace_negative_one)
+            # ######## no opt for debugging
+            # elif field in column:
+            #     df[column] = -1
+    return df
+
+
+def protocol_determination(df):
+    protocols = ["tcp", "udp", "icmp"]
+    percentages = {}
+
+    # Iterate over the protocols
+    for protocol in protocols:
+        columns = [col for col in df.columns if protocol in col and 'opt' not in col]
+
+        # Count non-negatives in each column and calculate the total percentage for each protocol
+        total_count = 0
+        non_negative_count = 0
+        for column in columns:
+            total_count += len(df[column])
+            non_negative_count += (df[column] >= 0).sum()
+
+        # Calculate percentage and store in the dictionary
+        if total_count > 0:
+            percentages[protocol] = (non_negative_count / total_count) * 100
+        else:
+            percentages[protocol] = 0
+
+    # Find protocol with the highest percentage of non-negative values
+    max_protocol = max(percentages, key=percentages.get)
+    return max_protocol
+
+
+def ipv4_pro_formatting(df):
+    #following is placeholder, how do we get payload size?:
+    # Define the substrings that have static values, e.g., ip version = 4
+
+    # Call the function to determine the protocol
+    dominating_protocol = protocol_determination(df)
+    print(dominating_protocol)
+    # tcp = 0,0,0,0,0,1,1,0
+    # udp = 0,0,0,1,0,0,0,1
+    # icmp = 0,0,0,0,0,0,0,1
+    fields = ["ipv4_pro"]
+    matching_columns = df.filter(like="ipv4_pro").columns
+
+    # Iterate over the columns of the source DataFrame
+    for column in matching_columns:
+        # Check if the substring exists in the column name
+        for field in fields:
+            if field in column:
+                if dominating_protocol == 'tcp':
+                    if '_0' in column:
+                        df[column] = 0
+                    elif '_1' in column:
+                        df[column] = 0
+                    elif '_2' in column:
+                        df[column] = 0
+                    elif '_3' in column:
+                        df[column] = 0
+                    elif '_4' in column:
+                        df[column] = 0
+                    elif '_5' in column:
+                        df[column] = 1
+                    elif '_6' in column:
+                        df[column] = 1
+                    elif '_7' in column:
+                        df[column] = 0
+                elif dominating_protocol == 'udp':
+                    if '_0' in column:
+                        df[column] = 0
+                    elif '_1' in column:
+                        df[column] = 0
+                    elif '_2' in column:
+                        df[column] = 0
+                    elif '_3' in column:
+                        df[column] = 1
+                    elif '_4' in column:
+                        df[column] = 0
+                    elif '_5' in column:
+                        df[column] = 0
+                    elif '_6' in column:
+                        df[column] = 0
+                    elif '_7' in column:
+                        df[column] = 1
+                elif dominating_protocol == 'icmp':
+                    if '_0' in column:
+                        df[column] = 0
+                    elif '_1' in column:
+                        df[column] = 0
+                    elif '_2' in column:
+                        df[column] = 0
+                    elif '_3' in column:
+                        df[column] = 0
+                    elif '_4' in column:
+                        df[column] = 0
+                    elif '_5' in column:
+                        df[column] = 0
+                    elif '_6' in column:
+                        df[column] = 0
+                    elif '_7' in column:
+                        df[column] = 1
+
+                # Copy the column values to the destination DataFrame
+                #df[column] = formatted_nprint[column]
+    # make sure non-dominant-protocol values are -1s
+    protocols = ["tcp", "udp", "icmp"]
+    for column in matching_columns:
+        # Check if the substring exists in the column name
+        for protocol in protocols:
+            if protocol in column:
+                if protocol != dominating_protocol:
+                    df[column] = -1
+
+    return df
+
+
+def ipv4_option_removal(df):
+    fields = ["ipv4_opt"]
+    matching_columns = df.filter(like="ipv4_opt_").columns
+
+    # Iterate over the columns of the source DataFrame
+    for column in matching_columns:
+        # Check if the substring exists in the column name
+        for field in fields:
+            #if field in column:
+            if field in column:
+                df[column] = -1
+            # ######## no opt for debugging
+            # elif field in column:
+            #     df[column] = -1
+
+    return df
+
+
+def ipv4_ttl_ensure(df):
+    for index in range(0, len(df)):
+        ttl_0 = True
+        for j in range(8):
+            if df.at[index, f'ipv4_ttl_{j}'] != 0:
+                ttl_0 = False
+        if ttl_0 == True:
+            df.at[index, 'ipv4_ttl_7'] = 1
+    return df
+
+
+def ipv4_hl_formatting(df):
+    # Get the subset of columns containing 'ipv4'
+    matching_columns = df.filter(like='ipv4')
+    # For each row in the DataFrame
+    for idx, row in matching_columns.iterrows():
+        # Count the 1s and 0s in this row
+        count = (row == 1).sum() + (row == 0).sum()
+        #print(count)
+        # Convert to 32-bit/4-byte words
+        header_size_words = math.ceil(count / 32)
+
+        # Convert to binary and pad with zeroes to get a 4-bit representation
+        binary_count = format(header_size_words, '04b')
+        # Update the 'ipv4_hl' columns in the original DataFrame based on this binary representation
+        for i in range(4):
+            df.at[idx, f'ipv4_hl_{i}'] = int(binary_count[i])
+    return df
+
+
+def tcp_header_negative_removal(df):
+    fields = ["tcp"]
+    matching_columns = df.filter(like='tcp')
+
+    # Function to apply to each cell
+    def replace_negative_one(val):
+        if val == -1:
+            return np.random.randint(0, 2)  # Generates either 0 or 1
+        else:
+            return val
+
+    # Iterate over the columns of the source DataFrame
+    for column in matching_columns:
+        # Check if the substring exists in the column name
+        for field in fields:
+            #if field in column:
+            if field in column and 'opt' not in column:
+                df[column] = df[column].apply(replace_negative_one)
+            # ######## no opt for debugging
+            # elif field in column:
+            #     df[column] = -1
+    return df
+
+
+def udp_header_negative_removal(df):
+    fields = ["udp"]
+    matching_columns = df.filter(like='udp')
+
+    # Function to apply to each cell
+    def replace_negative_one(val):
+        if val == -1:
+            return np.random.randint(0, 2)  # Generates either 0 or 1
+        else:
+            return val
+
+    # Iterate over the columns of the source DataFrame
+    for column in matching_columns:
+        # Check if the substring exists in the column name
+        for field in fields:
+            #if field in column:
+            if field in column and 'opt' not in column:
+                df[column] = df[column].apply(replace_negative_one)
+            # ######## no opt for debugging
+            # elif field in column:
+            #     df[column] = -1
+    return df
+
+
+def modify_tcp_option(packet):
+    # This function processes each packet of the dataframe and modifies the TCP option fields to align with the actual structure of the TCP options.
+    option_data = packet.loc['tcp_opt_0':'tcp_opt_319'].to_numpy()
+    idx = 0
+    options_lengths = [0, 8, 32, 24, 16, 40, 80]  # NOP/EOL, MSS, Window Scale, SACK Permitted, SACK, Timestamp
+
+    while idx < 320:
+        start_idx = idx
+        end_idx = idx
+        while end_idx < 320 and option_data[end_idx] != -1:
+            end_idx += 1
+        length = end_idx - start_idx
+        closest_option = min(options_lengths, key=lambda x: abs(x - length))
+
+        if closest_option == 32:  # MSS
+            #print('mss')
+            idx += 32
+            mss_data = np.concatenate(([0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0], option_data[start_idx+16:idx]))
+            mss_data = [np.random.choice([0, 1]) if bit == -1 else bit for bit in mss_data]
+            option_data[start_idx:idx] = mss_data
+            options_lengths.remove(closest_option)
+        elif closest_option == 24:  # Window Scale
+            #print('ws')
+            idx += 24
+            ws_data =  np.concatenate(([0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1], option_data[start_idx+16:idx]))
+            ws_data = [np.random.choice([0, 1]) if bit == -1 else bit for bit in ws_data]
+            option_data[start_idx:idx] = ws_data
+            options_lengths.remove(closest_option)
+        elif closest_option == 16:  # SACK Permitted
+            #print('sack permitted')
+            idx += 16
+            option_data[start_idx:idx] = [0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0]
+            options_lengths.remove(closest_option)
+
+        elif closest_option == 40:  # SACK (Assuming one block for simplicity)
+            # Assuming the length would be for one SACK block: kind (1 byte), length (1 byte, value 10 for one block), and 8 bytes of data.
+            idx+=40
+            sack_data = np.concatenate(([0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0], option_data[start_idx+16:idx]))
+            sack_data = [np.random.choice([0, 1]) if bit == -1 else bit for bit in sack_data]
+            option_data[start_idx:idx] = sack_data
+            options_lengths.remove(closest_option)
+
+        elif closest_option == 80:  # Timestamp
+            #print('time stamp')
+            idx += 80
+            ts_data = np.concatenate(([0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0], option_data[start_idx+16:idx]))
+            ts_data = [np.random.choice([0, 1]) if bit == -1 else bit for bit in ts_data]
+            option_data[start_idx:idx] = ts_data
+            options_lengths.remove(closest_option)
+
+        elif closest_option == 8:  # 
+            #print('eol/nop')
+            if option_data[start_idx] == 0:  # EOL
+                if start_idx == 0:
+                    idx += 8
+                    option_data[start_idx:idx] = [-1,-1,-1,-1,-1,-1,-1,-1]
+                    options_lengths.remove(closest_option)
+                    continue
+                else:
+                    idx += 8
+                    option_data[start_idx:idx] = [0,0,0,0,0,0,0,0]
+                    option_data[idx:] = [-1] * (320 - idx)
+                    options_lengths.remove(closest_option) 
+                    break
+            elif option_data[start_idx] == 1:  # NOP
+                idx += 8
+                option_data[start_idx:idx] = [0,0,0,0,0,0,0,1]
+        elif closest_option == 0:
+            idx += 8
+            option_data[start_idx:idx] = [-1,-1,-1,-1,-1,-1,-1,-1]
+
+    # Assign back the modified options to the DataFrame's row
+    packet.loc['tcp_opt_0':'tcp_opt_319'] = option_data
+    return packet
+
+
+def tcp_opt_formatting(generated_nprint):
+    generated_nprint = generated_nprint.apply(modify_tcp_option, axis=1)
+    return generated_nprint
+
+
+def tcp_data_offset_calculation(df):
+    # Get the subset of columns containing 'tcp'
+    tcp_columns = df.filter(like='tcp')
+    # For each row in the DataFrame
+    for idx, row in tcp_columns.iterrows():
+        # Count the 1s and 0s in this row
+        count = (row == 1).sum() + (row == 0).sum()
+        # Convert to 32-bit/4-byte words
+        header_size_words = math.ceil(count / 32)
+        # Convert to binary and pad with zeroes to get a 4-bit representation
+        binary_count = format(header_size_words, '04b')
+        # Update the 'ipv4_hl' columns in the original DataFrame based on this binary representation
+        for i in range(4):
+            df.at[idx, f'tcp_doff_{i}'] = int(binary_count[i])
+    return df
+
+
+def udp_len_calculation(df):
+    # For each row in the DataFrame
+    for idx, row in df.iterrows():
+        ipv4_hl_binary = [row[f'ipv4_hl_{i}'] for i in range(4)]
+        ipv4_hl_value = binary_to_decimal(ipv4_hl_binary) * 4  # Convert from 4-byte words to bytes
+        upper_limit = 1500 - ipv4_hl_value - 8
+        udp_len_binary = [row[f'udp_len_{i}'] for i in range(16)]
+        udp_len_value = binary_to_decimal(udp_len_binary)  # Convert from 4-byte words to bytes
+        if udp_len_value >= 8 and udp_len_value <= upper_limit:
+            continue
+        elif udp_len_value < 8:
+            for i in range(16):
+                df.at[idx, f'udp_len_{i}'] = 0
+            df.at[idx, f'udp_len_12'] = 1
+        else:
+            new_udp_len_binary = format(upper_limit, '016b')
+            for i in range(16):
+                df.at[idx, f'udp_len_{i}'] = int(new_udp_len_binary[i])
+    return df
+
+
+def ipv4_tl_formatting_tcp(df):
+
+    counter = 0
+    for idx, row in df.iterrows():
+        # Extracting binary values for ipv4_tl, ipv4_hl, and tcp_doff
+        ipv4_tl_binary = [row[f'ipv4_tl_{i}'] for i in range(16)]
+        ipv4_hl_binary = [row[f'ipv4_hl_{i}'] for i in range(4)]
+        tcp_doff_binary = [row[f'tcp_doff_{i}'] for i in range(4)]
+
+        # Convert the binary representation to integer
+        ipv4_tl_value = binary_to_decimal(ipv4_tl_binary)
+        ipv4_hl_value = binary_to_decimal(ipv4_hl_binary) * 4  # Convert from 4-byte words to bytes
+        tcp_doff_value = binary_to_decimal(tcp_doff_binary) * 4  # Convert from 4-byte words to bytes
+        # Checking and setting the new value if condition is met
+        if ipv4_tl_value < ipv4_hl_value + tcp_doff_value:
+            new_ipv4_tl_value = ipv4_hl_value + tcp_doff_value
+            # Convert new value back to binary and update the fields
+            new_ipv4_tl_binary = format(new_ipv4_tl_value, '016b')
+            for i, bit in enumerate(new_ipv4_tl_binary):
+                df.at[idx, f'ipv4_tl_{i}'] = int(bit)
+        elif ipv4_tl_value>1500:
+            new_ipv4_tl_binary = format(1500, '016b')
+            for i, bit in enumerate(new_ipv4_tl_binary):
+                df.at[idx, f'ipv4_tl_{i}'] = int(bit)
+        else:
+            new_ipv4_tl_binary = format(ipv4_tl_value, '016b')
+            for i, bit in enumerate(new_ipv4_tl_binary):
+                df.at[idx, f'ipv4_tl_{i}'] = int(bit)
+    # for i in range(16):
+    #     df[f'ipv4_tl_{i}'] = formatted_nprint[f'ipv4_tl_{i}']
+    for idx, row in df.iterrows():
+        # Extracting binary values for ipv4_tl, ipv4_hl, and tcp_doff
+        ipv4_tl_binary = [row[f'ipv4_tl_{i}'] for i in range(16)]
+        ipv4_hl_binary = [row[f'ipv4_hl_{i}'] for i in range(4)]
+        tcp_doff_binary = [row[f'tcp_doff_{i}'] for i in range(4)]
+
+        # Convert the binary representation to integer
+        ipv4_tl_value = binary_to_decimal(ipv4_tl_binary)
+        ipv4_hl_value = binary_to_decimal(ipv4_hl_binary) * 4  # Convert from 4-byte words to bytes
+        tcp_doff_value = binary_to_decimal(tcp_doff_binary) * 4  # Convert from 4-byte words to bytes
+        # print(f'Packet {counter}:')
+        # print('ipv4 total length in bytes:')
+        # print(ipv4_tl_value)
+        # print('ipv4 header length in bytes:')
+        # print(ipv4_hl_value)
+        # print('tcp doff in bytes:')
+        # print(tcp_doff_value)
+        # print()
+        counter +=1
+    return df
+
+
+def ipv4_tl_formatting_udp(df):
+    counter = 0
+    for idx, row in df.iterrows():
+        # Extracting binary values for ipv4_tl, ipv4_hl, and tcp_doff
+        ipv4_tl_binary = [row[f'ipv4_tl_{i}'] for i in range(16)]
+        ipv4_hl_binary = [row[f'ipv4_hl_{i}'] for i in range(4)]
+        udp_len_binary = [row[f'udp_len_{i}'] for i in range(16)]
+
+        # Convert the binary representation to integer
+        ipv4_tl_value = binary_to_decimal(ipv4_tl_binary)
+        ipv4_hl_value = binary_to_decimal(ipv4_hl_binary) * 4  # Convert from 4-byte words to bytes
+        udp_len_value = binary_to_decimal(udp_len_binary)  # Convert from 4-byte words to bytes
+        # Checking and setting the new value if condition is met
+        if ipv4_tl_value < ipv4_hl_value + udp_len_value:
+            new_ipv4_tl_value = ipv4_hl_value + udp_len_value
+            # Convert new value back to binary and update the fields
+            new_ipv4_tl_binary = format(new_ipv4_tl_value, '016b')
+            for i, bit in enumerate(new_ipv4_tl_binary):
+                df.at[idx, f'ipv4_tl_{i}'] = int(bit)
+        elif ipv4_tl_value>1500:
+            new_ipv4_tl_binary = format(1500, '016b')
+            for i, bit in enumerate(new_ipv4_tl_binary):
+                df.at[idx, f'ipv4_tl_{i}'] = int(bit)
+        else:
+            new_ipv4_tl_binary = format(ipv4_tl_value, '016b')
+            for i, bit in enumerate(new_ipv4_tl_binary):
+                df.at[idx, f'ipv4_tl_{i}'] = int(bit)
+    # for i in range(16):
+    #     df[f'ipv4_tl_{i}'] = formatted_nprint[f'ipv4_tl_{i}']
+    for idx, row in df.iterrows():
+        # Extracting binary values for ipv4_tl, ipv4_hl, and tcp_doff
+        ipv4_tl_binary = [row[f'ipv4_tl_{i}'] for i in range(16)]
+        ipv4_hl_binary = [row[f'ipv4_hl_{i}'] for i in range(4)]
+        udp_len_binary = [row[f'udp_len_{i}'] for i in range(16)]
+
+        # Convert the binary representation to integer
+        ipv4_tl_value = binary_to_decimal(ipv4_tl_binary)
+        ipv4_hl_value = binary_to_decimal(ipv4_hl_binary) * 4  # Convert from 4-byte words to bytes
+        udp_len_value = binary_to_decimal(udp_len_binary) # Convert from 4-byte words to bytes
+        counter +=1
+    return df
+
+
+def verify_and_correct_fields(df):
+    ##### IPv4
+    df = ipv4_ver_formatting(df) # we are using ipv4 only
+    df = ipv4_header_negative_removal(df) # here we make sure minimum ipv4 header size is achieved - no missing ipv4 header fields, random int is assigned as the fields largely are correct due to diffusion    
+    df = ipv4_pro_formatting(df) # this is less flexible -> choose protocol with most percentage of non negatives excluding option, and change all non-determined-protocol fields to -1
+    df = ipv4_option_removal(df) # mordern Internet rarely uses ipv4 options is used at all, from the data we observe ipv4 options are never present due to it being obsolete
+    df = ipv4_ttl_ensure(df) # ensure ttl > 0
+    df = ipv4_hl_formatting(df) # ipv4 header length formatting (this is computation based so we do not have flexibility here), need to be done after all other ipv4 fields are formatted
+
+    dominating_protocol = protocol_determination(df)
+
+    if dominating_protocol == 'tcp':
+        df = tcp_header_negative_removal(df)
+        df = tcp_opt_formatting(df) # option must be continuous and has fixed length, we use closest approximation here
+        df = tcp_data_offset_calculation(df) # count the total number of bytes in the tcp header fields including options and store the sume as the offset
+        ########### IPV4
+        df = ipv4_tl_formatting_tcp(df) # payload need to be considered
+    elif dominating_protocol == 'udp':
+        df = udp_header_negative_removal(df)
+        df = udp_len_calculation(df) 
+        ########### IPV4
+        df = ipv4_tl_formatting_udp(df) # payload need to be considered
+
     # Define the substrings we're interested in
     substrings = ["eth_", "ipv4_", "ipv6_", "tcp_", "udp_", "icmp_", "wlan_", "radiotap_"] # we ignore 'payload_' since nPrint 1.2.1 fills with -1 anyway.
     
@@ -249,16 +703,13 @@ def find_malformed_columns(df):
     
     # Print the malformed occurrences by row
     if row_occurrences:
-        for row_idx, occurrences in row_occurrences.items():
-            print(row_idx, occurrences)
-        print("ERROR: Malformed sequences by rows above.")
-        return True
+        #for row_idx, occurrences in row_occurrences.items():
+        #    print(row_idx, occurrences)
+        print(f'ERROR: Malformed sequences by rows above. There are {len(row_occurrences)} malformed rows!!')
     else:
         print("No malformed sequences found :)")
-        return False
 
-    #print("malformed 2275:", row_occurrences[2275])
-
+    return df
 
 
 def csv_to_packets(filename):
@@ -280,8 +731,9 @@ def csv_to_packets(filename):
     
     # Check for invalid cases in the nPrint input file: | ,0,-1,0 | ,0,-1,1 | ,1,-1,0 | ,1,-1,1
     if verify_nprint:
-        if find_malformed_columns(df):
-            sys.exit(1)
+        verify_and_correct_fields(df)
+
+    #sys.exit()
 
 
     total_lines = df.shape[0]
