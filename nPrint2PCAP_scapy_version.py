@@ -816,14 +816,11 @@ def csv_to_packets(filename):
     
     # Check/correct for invalid cases in the nPrint input file: | ,0,-1,0 | ,0,-1,1 | ,1,-1,0 | ,1,-1,1
     if verify_nprint:
-        df, dominating_protocol = verify_and_correct_fields(df)
-
         # assuming a dominant protocol for the entire nPrint file (as NetDiffusion did), let us do the same here
+        df, dominating_protocol = verify_and_correct_fields(df)
 
         # add 'flow' as first column. Same as '-O 4' argument in nPrint
         df = add_flow_column(df, dominating_protocol)
-
-        #sys.exit(0)
 
         # Modify the filename by appending "_corrected" before the extension
         output_filename = input.replace(".npt", "_corrected.npt")
