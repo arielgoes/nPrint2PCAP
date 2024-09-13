@@ -71,6 +71,7 @@ payload = {} # if "payload_<#>" columns exist, this dictionary will be dynamical
 
 
 def binary_to_decimal(binary_list):
+    #print("binary_list:", binary_list)
     """Convert a binary list representation to its decimal equivalent."""
     binary_str = ''.join(map(str, binary_list))
     return int(binary_str, 2)
@@ -125,9 +126,9 @@ def bits_to_bytes(bits):
 def process_field(row, prefix, length):
     """Process a field with given prefix and bit length"""
     cols = [col for col in row.index if col.startswith(prefix)]
-    bits = ''.join(str(row[col]) for col in cols if row[col] != -1)
+    bits = ''.join(str(int(row[col])) for col in cols if row[col] != -1)
     if len(bits) > length:
-        raise ValueError(f"Field {prefix} has more bits than expected ({length})")
+        raise ValueError(f"Field {prefix} has more bits than expected ({length}). Bits found: {bits}")
     #print(f"Processing {prefix}: {bits}")  # Debug: Print the bits being processed
     return bits
 
@@ -194,24 +195,30 @@ def verify_set_ports(row, df, prefix_list) -> str:
         cols = df.columns[df.columns.str.contains(prefix)]
         if len(cols) > 0:
             first_col_with_substring = cols[0]
-            if str(row[first_col_with_substring]) != str(-1):
+            if int(row[first_col_with_substring]) != -1:
                 # Assuming the next 16 columns represent the port number in binary (e.g., tcp_port_0 to tcp_port_15)
                 binary_port = ''.join([str(row[col]) for col in cols[:16]])
                 ports += f"{prefix}port:{binary_to_port_string(binary_port)} "
     return ports.strip()
 
 
+# Assumes a correctly pre-processed nPrint file as input (i.e., no cases such as ",1,-1,1," and so on)
 def verify_set_protocols(row, df, prefix_list) -> str:
     protocols=''
+    #print("prefix_list:", prefix_list)
     for prefix in prefix_list:
         cols = df.columns[df.columns.str.contains(prefix)]
         if len(cols) > 0:
             first_col_with_substring = cols[0]
-            if str(row[first_col_with_substring]) != str(-1): # if has col and the row's first col is != -1 (e.g., ipv4_ver_0),
+            converted = int(row[first_col_with_substring])
+            #print("converted:", converted)
+            if converted != -1: # if has col and the row's first col is != -1 (e.g., ipv4_ver_0),
                                                               # set protocol. NOTE: We assume the remaining cols of this protocol
                                                               # are correctly set (i.e., no '-1' in between) 
                 protocols += prefix
     return protocols
+
+
 
 
 def ipv4_ver_formatting(df):
@@ -592,9 +599,9 @@ def ipv4_tl_formatting_tcp(df):
     counter = 0
     for idx, row in df.iterrows():
         # Extracting binary values for ipv4_tl, ipv4_hl, and tcp_doff
-        ipv4_tl_binary = [row[f'ipv4_tl_{i}'] for i in range(16)]
-        ipv4_hl_binary = [row[f'ipv4_hl_{i}'] for i in range(4)]
-        tcp_doff_binary = [row[f'tcp_doff_{i}'] for i in range(4)]
+        ipv4_tl_binary = [row[f'ipv4_tl_{i}'].astype('int8') for i in range(16)]
+        ipv4_hl_binary = [row[f'ipv4_hl_{i}'].astype('int8') for i in range(4)]
+        tcp_doff_binary = [row[f'tcp_doff_{i}'].astype('int8') for i in range(4)]
 
         # Convert the binary representation to integer
         ipv4_tl_value = binary_to_decimal(ipv4_tl_binary)
@@ -619,9 +626,9 @@ def ipv4_tl_formatting_tcp(df):
     #     df[f'ipv4_tl_{i}'] = formatted_nprint[f'ipv4_tl_{i}']
     for idx, row in df.iterrows():
         # Extracting binary values for ipv4_tl, ipv4_hl, and tcp_doff
-        ipv4_tl_binary = [row[f'ipv4_tl_{i}'] for i in range(16)]
-        ipv4_hl_binary = [row[f'ipv4_hl_{i}'] for i in range(4)]
-        tcp_doff_binary = [row[f'tcp_doff_{i}'] for i in range(4)]
+        ipv4_tl_binary = [row[f'ipv4_tl_{i}'].astype('int8') for i in range(16)]
+        ipv4_hl_binary = [row[f'ipv4_hl_{i}'].astype('int8') for i in range(4)]
+        tcp_doff_binary = [row[f'tcp_doff_{i}'].astype('int8') for i in range(4)]
 
         # Convert the binary representation to integer
         ipv4_tl_value = binary_to_decimal(ipv4_tl_binary)
@@ -639,13 +646,14 @@ def ipv4_tl_formatting_tcp(df):
     return df
 
 
+
 def ipv4_tl_formatting_udp(df):
     counter = 0
     for idx, row in df.iterrows():
         # Extracting binary values for ipv4_tl, ipv4_hl, and tcp_doff
-        ipv4_tl_binary = [row[f'ipv4_tl_{i}'] for i in range(16)]
-        ipv4_hl_binary = [row[f'ipv4_hl_{i}'] for i in range(4)]
-        udp_len_binary = [row[f'udp_len_{i}'] for i in range(16)]
+        ipv4_tl_binary = [row[f'ipv4_tl_{i}'].astype('int8') for i in range(16)]
+        ipv4_hl_binary = [row[f'ipv4_hl_{i}'].astype('int8') for i in range(4)]
+        udp_len_binary = [row[f'udp_len_{i}'].astype('int8') for i in range(16)]
 
         # Convert the binary representation to integer
         ipv4_tl_value = binary_to_decimal(ipv4_tl_binary)
@@ -670,9 +678,9 @@ def ipv4_tl_formatting_udp(df):
     #     df[f'ipv4_tl_{i}'] = formatted_nprint[f'ipv4_tl_{i}']
     for idx, row in df.iterrows():
         # Extracting binary values for ipv4_tl, ipv4_hl, and tcp_doff
-        ipv4_tl_binary = [row[f'ipv4_tl_{i}'] for i in range(16)]
-        ipv4_hl_binary = [row[f'ipv4_hl_{i}'] for i in range(4)]
-        udp_len_binary = [row[f'udp_len_{i}'] for i in range(16)]
+        ipv4_tl_binary = [row[f'ipv4_tl_{i}'].astype('int8') for i in range(16)]
+        ipv4_hl_binary = [row[f'ipv4_hl_{i}'].astype('int8') for i in range(4)]
+        udp_len_binary = [row[f'udp_len_{i}'].astype('int8') for i in range(16)]
 
         # Convert the binary representation to integer
         ipv4_tl_value = binary_to_decimal(ipv4_tl_binary)
@@ -786,10 +794,6 @@ def add_flow_column(df, dominating_protocol):
 
         # Append the 5-tuple string to the list
         flow_column.append(final_string)
-    
-
-    # Drop any 'Unamed <#>' columns
-    df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
 
     # Insert the 'flow' column to the leftmost position in the DataFrame
     df.insert(0, 'flow', flow_column)
@@ -805,14 +809,32 @@ def csv_to_packets(filename):
                   # it contains either the header
                   # (or badly positioned bit information e.g., 0,1,0,...)
     try:
-        df = pd.read_csv(filename, header=0) # header is first row (row 0)
+        #df = pd.read_csv(filename, header=0) # header is first row (row 0)
+        df = pd.read_csv(filename, nrows=0) # header is first row (row 0)
     except FileNotFoundError:
         raise FileNotFoundError(f"File '{filename}' not found.")
+
+
+    columns = pd.read_csv(filename, nrows=0).columns
+
+    # Create a dictionary of dtypes where the first and third to 1089 columns are int8, and the 'rts' (relative timestamp) column is int32
+    dtypes = {col: 'int8' for col in columns}
+
+    if 'rts' in columns:
+        dtypes['rts'] = 'float32'  # Make the second column float32
+    elif 'tv_sec' in columns and 'tv_usec' in columns:
+        dtypes['tv_sec'] = 'int32'
+        dtypes['tv_usec'] = 'float32' 
+
+    df = pd.read_csv(filename, usecols=range(0, len(pd.read_csv(filename, nrows=0).columns)), dtype=dtypes)
+
+    # Drop any 'Unamed <#>' columns
+    df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+    #print(df.columns)
+    #print("DATATYPES: ", df.dtypes)
+
     if len(df) < min_lines:
         raise ValueError(f"File '{filename}' has fewer than {min_lines} lines.")
-    first_line = df.iloc[0, 0]
-    #if first_line.isdigit():
-    #    raise ValueError(f"File '{filename}' is malformed: First line should not start with a number.")
     
     # Check/correct for invalid cases in the nPrint input file: | ,0,-1,0 | ,0,-1,1 | ,1,-1,0 | ,1,-1,1
     if verify_nprint:
