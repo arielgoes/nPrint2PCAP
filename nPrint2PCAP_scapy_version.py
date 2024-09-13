@@ -210,7 +210,7 @@ def verify_set_protocols(row, df, prefix_list) -> str:
         cols = df.columns[df.columns.str.contains(prefix)]
         if len(cols) > 0:
             first_col_with_substring = cols[0]
-            converted = int(row[first_col_with_substring])
+            converted = np.int8(row[first_col_with_substring])
             #print("converted:", converted)
             if converted != -1: # if has col and the row's first col is != -1 (e.g., ipv4_ver_0),
                                                               # set protocol. NOTE: We assume the remaining cols of this protocol
@@ -887,8 +887,6 @@ def verify_and_correct_fields(df):
         df = tcp_data_offset_calculation(df) # count the total number of bytes in the tcp header fields including options and store the sume as the offset
         ########### IPV4
         df = ipv4_tl_formatting_tcp(df) # payload need to be considered
-        #print("df dtypes:", df.dtypes)
-        #sys.exit()
     elif dominating_protocol == 'udp':
         df = udp_header_negative_removal(df)
         df = udp_len_calculation(df) 
@@ -981,6 +979,22 @@ def add_flow_column(df, dominating_protocol):
     return df
 
 
+def set_timestamp(packet, df, row, columns):
+    packet.time = 0
+    if 'rts' in df.columns:
+        column_index = df.columns.get_loc('rts')
+        #packet.time = row[column_index]
+        packet.time = row.iloc[column_index]
+    elif 'tv_sec' in columns and 'tv_usec' in columns:
+        column_index = df.columns.get_loc('tv_sec')
+        #time_sec_usec = str(row[column_index])
+        time_sec_usec = str(row.iloc[column_index])  
+        column_index = df.columns.get_loc('tv_sec')
+        #time_sec_usec += str(row[column_index])
+        time_sec_usec += str(row.iloc[column_index])
+        packet.time = time_sec_usec
+
+
 def csv_to_packets(filename):
 
     #print(df.shape[0]) # df.shape: (lines, columns)
@@ -994,17 +1008,21 @@ def csv_to_packets(filename):
     except FileNotFoundError:
         raise FileNotFoundError(f"File '{filename}' not found.")
 
-
     columns = pd.read_csv(filename, nrows=0).columns
+    #print("columns:", columns)
 
     # Create a dictionary of dtypes where the first and third to 1089 columns are int8, and the 'rts' (relative timestamp) column is int32
     dtypes = {col: 'int8' for col in columns}
 
+    #hasTimeCol = False # Control the insertion of packet timestamp during its crafting
     if 'rts' in columns:
         dtypes['rts'] = 'float32'  # Make the second column float32
     elif 'tv_sec' in columns and 'tv_usec' in columns:
         dtypes['tv_sec'] = 'int32'
-        dtypes['tv_usec'] = 'float32' 
+        dtypes['tv_usec'] = 'float32'
+    if 'flow' in columns:
+        dtypes['flow'] = 'str'
+        
 
     df = pd.read_csv(filename, usecols=range(0, len(pd.read_csv(filename, nrows=0).columns)), dtype=dtypes)
 
@@ -1015,6 +1033,19 @@ def csv_to_packets(filename):
 
     if len(df) < min_lines:
         raise ValueError(f"File '{filename}' has fewer than {min_lines} lines.")
+    
+    # Determine the number of rows to process
+    total_rows = df.shape[0]
+    rows_to_process = args.rows if args.rows is not None else total_rows
+
+    # Ensure we don't exceed the total number of rows
+    if rows_to_process > total_rows:
+        rows_to_process = total_rows
+        print(f'The provided number of rows ({args.rows}) is more than the total rows ({total_rows}).  \
+              Hence, we set as default all rows: {rows_to_process}')
+    else:
+        print("rows_to_process:", rows_to_process)
+    
     
     # Check/correct for invalid cases in the nPrint input file: | ,0,-1,0 | ,0,-1,1 | ,1,-1,0 | ,1,-1,1
     if verify_nprint:
@@ -1037,6 +1068,8 @@ def csv_to_packets(filename):
     
     # Process each row in the CSV
     for index, row in df.iterrows():
+        if index >= rows_to_process:
+            break
 
         # Calculate the percentage of completion
         percentage = (index + 1) / total_lines * 100
@@ -1147,7 +1180,10 @@ def csv_to_packets(filename):
 
                     packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / packet
                     
-                #print("packet len:", len(packet))
+                    
+                    # set timestamp
+                    set_timestamp(packet, df, row, columns)
+                    
 
                 #print(f"Packet: {packet}")  # Debug: Print the constructed packet
                 packets.append(packet)
@@ -1244,10 +1280,10 @@ def csv_to_packets(filename):
 
                 #print(f"Packet: {packet}")  # Debug: Print the constructed packet
                 packets.append(packet)
-                
+            
             else:
                 raise ValueError(f"Invalid protocol combination: '{protocols}'.")
-
+            #print("LEN ROW:", len(row))
         except ValueError as e:
             print(f"Error processing packet for row {index}: {e}")
         except Exception as e:
@@ -1285,7 +1321,9 @@ if __name__ == '__main__':
                         action='store_true',
                         required=False,
                         default=False)
-
+    parser.add_argument('-r', '--rows', type=int, default=None,
+                        help='Number of rows to process (default: all rows)')
+    
     args = parser.parse_args()
     
     input = args.input[0] # input nPrint file
@@ -1306,6 +1344,17 @@ if __name__ == '__main__':
     # Usage
     packets = csv_to_packets(input)
     #print("packets:", packets)
+
+    # Create the PCAP filename (remove if there is an existing file with the same name)
+    if output.endswith('.pcap'):
+        pcap_filename = output
+    else:
+        pcap_filename = os.path.splitext(output)[0] + ".pcap"
+    
+    # Check if the PCAP file already exists
+    if os.path.exists(pcap_filename):
+        # If the file exists, delete it
+        os.remove(pcap_filename)
 
     # Save packets to PCAP
     with PcapWriter(output, append=True, sync=True) as pcap_writer:
