@@ -974,7 +974,10 @@ def add_flow_column(df, dominating_protocol):
         flow_column.append(final_string)
 
     # Insert the 'flow' column to the leftmost position in the DataFrame
-    df.insert(0, 'flow', flow_column)
+    if 'src_ip' not in df.columns and 'dst_ip' not in df.columns and \
+       'src_prt' not in df.columns and 'dst_prt' not in df.columns and \
+       'flow' not in df.columns and 'tx_mac' not in df.columns:
+        df.insert(0, 'flow', flow_column)
 
     return df
 
@@ -1020,8 +1023,18 @@ def csv_to_packets(filename):
     elif 'tv_sec' in columns and 'tv_usec' in columns:
         dtypes['tv_sec'] = 'int32'
         dtypes['tv_usec'] = 'float32'
-    if 'flow' in columns:
+    if 'src_ip' in columns: # nprint -O 0 
+        dtypes['src_ip'] = 'str'
+    elif 'dst_ip' in columns:
+        dtypes['dst_ip'] = 'str'
+    elif 'src_prt' in columns:
+        dtypes['src_prt'] = 'str'
+    elif 'dst_prt' in columns:
+        dtypes['dst_prts'] = 'str'
+    elif 'flow' in columns:
         dtypes['flow'] = 'str'
+    elif 'tx_mac' in columns:
+        dtypes['tx_mac'] = 'str'
         
 
     df = pd.read_csv(filename, usecols=range(0, len(pd.read_csv(filename, nrows=0).columns)), dtype=dtypes)
@@ -1180,10 +1193,8 @@ def csv_to_packets(filename):
 
                     packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / packet
                     
-                    
                     # set timestamp
                     set_timestamp(packet, df, row, columns)
-                    
 
                 #print(f"Packet: {packet}")  # Debug: Print the constructed packet
                 packets.append(packet)
@@ -1276,7 +1287,9 @@ def csv_to_packets(filename):
                         packet[UDP].chksum = udp_chksum
                     
                     packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / packet
-                #print("packet len:", len(packet))
+
+                # set timestamp
+                set_timestamp(packet, df, row, columns)
 
                 #print(f"Packet: {packet}")  # Debug: Print the constructed packet
                 packets.append(packet)
