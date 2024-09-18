@@ -876,9 +876,6 @@ def has_malformed_sequences(df):
     
     # Initialize the dictionary to store occurrences by row
     row_occurrences = {}
-
-    print(df.columns[-1])
-    sys.exit()
     
     # Check for malformed sequences
     for i in range(1, len(columns_of_interest) - 1):
@@ -1202,13 +1199,11 @@ def csv_to_packets(filename):
                         packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / packet
                         
                         # set timestamp
-                        packet.time = set_timestamp(packet, df, row, columns)
+                        if 'rts' in df.columns:
+                            packet.time = set_timestamp(packet, df, row, columns)
                     
                     #print(f"Packet: {packet}")  # Debug: Print the constructed packet
                     packets.append(packet)
-                        
-                    print("HEEREE")
-                    sys.exit(0)
                 
                 elif 'udp' in protocols:
                     #########
@@ -1278,7 +1273,8 @@ def csv_to_packets(filename):
                         packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / packet
 
                     # set timestamp
-                    set_timestamp(packet, df, row, columns)
+                    if 'rts' in columns:
+                        set_timestamp(packet, df, row, columns)
 
                     #print(f"Packet: {packet}")  # Debug: Print the constructed packet
                     packets.append(packet)
