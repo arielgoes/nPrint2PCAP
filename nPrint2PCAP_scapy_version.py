@@ -867,32 +867,7 @@ def ipv4_tl_formatting_udp(df):
 
     return df
 
-
-
-def verify_and_correct_fields(df):
-    ##### IPv4
-    # assuming IPv4 so far, the function below finds out if most of the fields are enabled (i.e., != -1) for TCP or UDP
-    dominating_protocol = protocol_determination(df)
-
-    df = ipv4_ver_formatting(df) # we are using ipv4 only
-    df = ipv4_header_negative_removal(df) # here we make sure minimum ipv4 header size is achieved - no missing ipv4 header fields, random int is assigned as the fields largely are correct due to timeVAE
-    df = ipv4_pro_formatting(df, dominating_protocol) # this is less flexible -> choose protocol with most percentage of non negatives excluding option, and change all non-determined-protocol fields to -1
-    df = ipv4_option_removal(df) # mordern Internet rarely uses ipv4 options is used at all, from the data we observe ipv4 options are never present due to it being obsolete
-    df = ipv4_ttl_ensure(df) # ensure ttl > 0
-    df = ipv4_hl_formatting(df) # ipv4 header length formatting (this is computation based so we do not have flexibility here), need to be done after all other ipv4 fields are formatted
-
-    if dominating_protocol == 'tcp':
-        df = tcp_header_negative_removal(df)
-        df = tcp_opt_formatting(df) # (REVISAR) option must be continuous and has fixed length, we use closest approximation here
-        df = tcp_data_offset_calculation(df) # count the total number of bytes in the tcp header fields including options and store the sume as the offset
-        ########### IPV4
-        df = ipv4_tl_formatting_tcp(df) # payload need to be considered
-    elif dominating_protocol == 'udp':
-        df = udp_header_negative_removal(df)
-        df = udp_len_calculation(df) 
-        ########### IPV4
-        df = ipv4_tl_formatting_udp(df) # payload need to be considered
-
+def has_malformed_sequences(df):
     # Define the substrings we're interested in
     substrings = ["eth_", "ipv4_", "ipv6_", "tcp_", "udp_", "icmp_", "wlan_", "radiotap_"] # we ignore 'payload_' since nPrint 1.2.1 fills with -1 anyway.
     
@@ -901,6 +876,9 @@ def verify_and_correct_fields(df):
     
     # Initialize the dictionary to store occurrences by row
     row_occurrences = {}
+
+    print(df.columns[-1])
+    sys.exit()
     
     # Check for malformed sequences
     for i in range(1, len(columns_of_interest) - 1):
@@ -913,7 +891,8 @@ def verify_and_correct_fields(df):
         values_next = df[col_next].values
 
         for row_idx in range(len(values_curr)):
-            if values_curr[row_idx] == -1 and (values_prev[row_idx] != -1 and values_next[row_idx] != -1):
+            if (values_curr[row_idx] == -1 and (values_prev[row_idx] != -1 and values_next[row_idx] != -1)) or \
+               (values_prev[row_idx] == -1 and (df.columns[i-1] == 'flow' or df.columns[i-1] == 'rts')):
                 # Append occurrence to the dictionary
                 if row_idx not in row_occurrences:
                     row_occurrences[row_idx] = []
@@ -930,9 +909,39 @@ def verify_and_correct_fields(df):
         #for row_idx, occurrences in row_occurrences.items():
         #    print(row_idx, occurrences)
         print(f'ERROR: Malformed sequences by rows above. There are {len(row_occurrences)} malformed rows!!')
-        sys.exit(0)
+        print("We will try to correct it...")
+        return True
     else:
         print("No malformed sequences found :)")
+        False
+
+def verify_and_correct_fields(df):
+
+    dominating_protocol = protocol_determination(df)
+    
+    if has_malformed_sequences(df):
+        ##### IPv4
+        # assuming IPv4 so far, the function below finds out if most of the fields are enabled (i.e., != -1) for TCP or UDP
+        
+
+        df = ipv4_ver_formatting(df) # we are using ipv4 only
+        df = ipv4_header_negative_removal(df) # here we make sure minimum ipv4 header size is achieved - no missing ipv4 header fields, random int is assigned as the fields largely are correct due to timeVAE
+        df = ipv4_pro_formatting(df, dominating_protocol) # this is less flexible -> choose protocol with most percentage of non negatives excluding option, and change all non-determined-protocol fields to -1
+        df = ipv4_option_removal(df) # mordern Internet rarely uses ipv4 options is used at all, from the data we observe ipv4 options are never present due to it being obsolete
+        df = ipv4_ttl_ensure(df) # ensure ttl > 0
+        df = ipv4_hl_formatting(df) # ipv4 header length formatting (this is computation based so we do not have flexibility here), need to be done after all other ipv4 fields are formatted
+
+        if dominating_protocol == 'tcp':
+            df = tcp_header_negative_removal(df)
+            df = tcp_opt_formatting(df) # (REVISAR) option must be continuous and has fixed length, we use closest approximation here
+            df = tcp_data_offset_calculation(df) # count the total number of bytes in the tcp header fields including options and store the sume as the offset
+            ########### IPV4
+            df = ipv4_tl_formatting_tcp(df) # payload need to be considered
+        elif dominating_protocol == 'udp':
+            df = udp_header_negative_removal(df)
+            df = udp_len_calculation(df) 
+            ########### IPV4
+            df = ipv4_tl_formatting_udp(df) # payload need to be considered
 
     return df, dominating_protocol
 
@@ -983,7 +992,7 @@ def add_flow_column(df, dominating_protocol):
 
 
 def set_timestamp(packet, df, row, columns):
-    packet.time = 0
+    #packet.time = 0
     if 'rts' in df.columns:
         column_index = df.columns.get_loc('rts')
         #packet.time = row[column_index]
@@ -1096,16 +1105,14 @@ def csv_to_packets(filename):
             prefix_list = ['eth_', 'ipv4_', 'tcp_', 'udp_']
             protocols = verify_set_protocols(row, df, prefix_list)
 
-            #print("SET PROTOCOLS:", protocols)
+            valid_protocol_sequences = ['eth_ipv4_tcp_payload_', 'eth_ipv4_tcp_', 'ipv4_tcp_payload_', 'ipv4_tcp_',
+                                        'eth_ipv4_udp_payload_', 'eth_ipv4_udp_', 'ipv4_udp_payload_', 'ipv4_udp_']
 
-            ##############
-            ## IPv4/TCP ##
-            ##############
-            if protocols == 'ipv4_tcp_' or \
-                protocols == 'eth_ipv4_tcp_' or \
-                protocols == 'ipv4_tcp_payload_' or \
-                protocols == 'eth_ipv4_tcp_payload_':
-                
+            #print("SET PROTOCOLS:", protocols)
+            if protocols not in valid_protocol_sequences:
+                raise ValueError(f"Invalid protocol combination: '{protocols}'.")
+            
+            if 'ipv4' in protocols:
                 ########## 
                 ## IPv4 ##
                 ########## 
@@ -1125,178 +1132,157 @@ def csv_to_packets(filename):
                 if checksum_ipv4:
                     ipv4_header = compute_ipv4_checksum(ipv4_header)
                     #print("Header with checksum:", ipv4_header)
-
-                #########
-                ## TCP ##
-                #########
-                # Concatenate the bits to form a minimal value that is multiple of 8 and create bytes (or bytes) from it.
-                total = create_byte_representation(row, tcp_prefixes)
                 
-                # Concatenate using the `+` operator
-                tcp_header = b''.join(total)
+                if 'tcp' in protocols:
+                    #########
+                    ## TCP ##
+                    #########
+                    # Concatenate the bits to form a minimal value that is multiple of 8 and create bytes (or bytes) from it.
+                    total = create_byte_representation(row, tcp_prefixes)
                     
-                # payload for IPv4/TCP
-                # fill the packet with a random payload if there is none
-                payload = int(process_field(row, 'ipv4_tl', 16),2) - len(ipv4_header) - len(tcp_header) # TCP payload = IPv4 total len (field) - IPv4 len - (TCP data offset * 4)
-                payload = b'\x00' * payload
+                    # Concatenate using the `+` operator
+                    tcp_header = b''.join(total)
 
-                # Concatenate headers
-                packet_data = ipv4_header + tcp_header + payload
+                    # payload for IPv4/TCP
+                    # fill the packet with a random payload if there is none
+                    payload = int(process_field(row, 'ipv4_tl', 16),2) - len(ipv4_header) - len(tcp_header) # TCP payload = IPv4 total len (field) - IPv4 len - (TCP data offset * 4)
+                    payload = b'\x00' * payload
 
-                # Save the unique IPs to create ethernet header
-                prefix = 'ipv4_src_'
-                length_ip = 32
-                ipv4_src = process_field(row, prefix, length_ip)
-                ipv4_src = binary_to_ipv4_string(ipv4_src)
-                #
-                prefix = 'ipv4_dst_'
-                length_ip = 32
-                ipv4_dst = process_field(row, prefix, length_ip)
-                ipv4_dst = binary_to_ipv4_string(ipv4_dst)
-                
-                # Generate a random unique MAC
-                rnd_mac = generate_unique_random_mac(rnd_mac_unique)
+                    # Concatenate headers
+                    packet_data = ipv4_header + tcp_header + payload
 
-                if ipv4_src not in ipv4_to_mac_dict:
-                    ipv4_to_mac_dict[ipv4_src] = rnd_mac
-                
-                # Generate a random unique MAC
-                rnd_mac = generate_unique_random_mac(rnd_mac_unique)
-
-                if ipv4_dst not in ipv4_to_mac_dict:
-                    ipv4_to_mac_dict[ipv4_dst] = rnd_mac
-
-                # Create packet
-                if 'eth_' in protocols:
-                    ##############
-                    ## Ethernet ##
-                    ##############
-                    total = create_byte_representation(row, eth_prefixes)
-                    eth_header = b''.join(total)
-                    packet_data = eth_header + packet_data
-                    packet = Raw(load=packet_data)
-                else:
-                    if checksum_tcp:
-                        tcp_header = bytearray(tcp_header)
-                        tcp_header[16:18] = b'\x00\x00' # force the TCP checksum field to start with zeros
-                        #print("TCP header bytes:", tcp_header)
-
-                    packet = IP(ipv4_header) / TCP(tcp_header) / Raw(load=payload)
-
-                    # Calculate the TCP checksum
-                    if checksum_tcp:
-                        packet_raw = raw(packet)
-                        tcp_raw = packet_raw[20:]
-                        tcp_chksum = in4_chksum(socket.IPPROTO_TCP, packet[IP], tcp_raw)  # For more infos, call "help(in4_chksum)"
-                        #print("TCP Checksum: ", hex(tcp_chksum))
-                        packet[TCP].chksum = tcp_chksum
-
-                    packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / packet
+                    # Save the unique IPs to create ethernet header
+                    prefix = 'ipv4_src_'
+                    length_ip = 32
+                    ipv4_src = process_field(row, prefix, length_ip)
+                    ipv4_src = binary_to_ipv4_string(ipv4_src)
+                    #
+                    prefix = 'ipv4_dst_'
+                    length_ip = 32
+                    ipv4_dst = process_field(row, prefix, length_ip)
+                    ipv4_dst = binary_to_ipv4_string(ipv4_dst)
                     
+                    # Generate a random unique MAC
+                    rnd_mac = generate_unique_random_mac(rnd_mac_unique)
+
+                    if ipv4_src not in ipv4_to_mac_dict:
+                        ipv4_to_mac_dict[ipv4_src] = rnd_mac
+                    
+                    # Generate a random unique MAC
+                    rnd_mac = generate_unique_random_mac(rnd_mac_unique)
+
+                    if ipv4_dst not in ipv4_to_mac_dict:
+                        ipv4_to_mac_dict[ipv4_dst] = rnd_mac
+
+                    # Create packet
+                    if 'eth_' in protocols:
+                        ##############
+                        ## Ethernet ##
+                        ##############
+                        total = create_byte_representation(row, eth_prefixes)
+                        eth_header = b''.join(total)
+                        packet_data = eth_header + packet_data
+                        packet = Raw(load=packet_data)
+                    else:
+                        if checksum_tcp:
+                            tcp_header = bytearray(tcp_header)
+                            tcp_header[16:18] = b'\x00\x00' # force the TCP checksum field to start with zeros
+                            #print("TCP header bytes:", tcp_header)
+
+                        packet = IP(ipv4_header) / TCP(tcp_header) / Raw(load=payload)
+
+                        # Calculate the TCP checksum
+                        if checksum_tcp:
+                            packet_raw = raw(packet)
+                            tcp_raw = packet_raw[20:]
+                            tcp_chksum = in4_chksum(socket.IPPROTO_TCP, packet[IP], tcp_raw)  # For more infos, call "help(in4_chksum)"
+                            #print("TCP Checksum: ", hex(tcp_chksum))
+                            packet[TCP].chksum = tcp_chksum
+
+                        packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / packet
+                        
+                        # set timestamp
+                        packet.time = set_timestamp(packet, df, row, columns)
+                    
+                    #print(f"Packet: {packet}")  # Debug: Print the constructed packet
+                    packets.append(packet)
+                        
+                    print("HEEREE")
+                    sys.exit(0)
+                
+                elif 'udp' in protocols:
+                    #########
+                    ## UDP ##
+                    #########
+                    # Concatenate the bits to form a minimal value that is multiple of 8 and create bytes (or bytes) from it.
+                    total = create_byte_representation(row, udp_prefixes)
+                    
+                    # Concatenate using the `+` operator
+                    udp_header = b''.join(total)
+                    #print("UDP (concatenated): ", udp_header)
+
+                    # payload for IPv4/UDP 
+                    payload = int(process_field(row, 'ipv4_tl', 16),2) - len(ipv4_header) - len(udp_header)
+                    payload = b'\x00' * payload
+                    packet_data = ipv4_header + udp_header + payload
+
+                    # Save the unique IPs to create ethernet header
+                    length_ip = 32
+
+                    prefix = 'ipv4_src_'
+                    ipv4_src = process_field(row, prefix, length_ip)
+                    ipv4_src = binary_to_ipv4_string(ipv4_src)
+                    #
+                    prefix = 'ipv4_dst_'
+                    ipv4_dst = process_field(row, prefix, length_ip)
+                    ipv4_dst = binary_to_ipv4_string(ipv4_dst)
+                    
+                    # Generate a random unique MAC
+                    rnd_mac = generate_unique_random_mac(rnd_mac_unique)
+
+                    if ipv4_src not in ipv4_to_mac_dict:
+                        ipv4_to_mac_dict[ipv4_src] = rnd_mac
+                    
+                    # Generate a random unique MAC
+                    rnd_mac = generate_unique_random_mac(rnd_mac_unique)
+
+                    if ipv4_dst not in ipv4_to_mac_dict:
+                        ipv4_to_mac_dict[ipv4_dst] = rnd_mac
+
+                    # Create packet
+                    if 'eth_' in protocols:
+                        ##############
+                        ## Ethernet ##
+                        ##############
+                        total = create_byte_representation(row, eth_prefixes)
+                        eth_header = b''.join(total)
+                        packet_data = eth_header + packet_data
+                        packet = Raw(load=packet_data)
+                    else:
+                        if checksum_udp:
+                            # Set the checksum field to zero (2 bytes) in udp_header
+                            udp_header = udp_header[:6] + b'\x00\x00' + udp_header[8:]
+                        #packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / Raw(load=packet_data)
+                        packet = IP(ipv4_header) / UDP(udp_header) / Raw(load=payload)
+
+                        # Calculate the UDP checksum
+                        if checksum_udp:
+                            packet_raw = raw(packet)
+                            udp_raw = packet_raw[20:]
+                            
+                            # Calculate the checksum
+                            udp_chksum = in4_chksum(socket.IPPROTO_UDP, packet[IP], udp_raw)  # For more infos, call "help(in4_chksum)"
+                            #print("UDP Checksum: ", hex(udp_chksum))
+                            packet[UDP].chksum = udp_chksum
+                        
+                        packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / packet
+
                     # set timestamp
                     set_timestamp(packet, df, row, columns)
 
-                #print(f"Packet: {packet}")  # Debug: Print the constructed packet
-                packets.append(packet)
-            
-            ##############
-            ## IPv4/UDP ##
-            ##############
-            elif protocols == 'ipv4_udp_' or \
-                protocols == 'eth_ipv4_udp_' or \
-                protocols == 'ipv4_udp_payload_' or \
-                protocols == 'eth_ipv4_udp_payload_':
+                    #print(f"Packet: {packet}")  # Debug: Print the constructed packet
+                    packets.append(packet)
 
-                ########## 
-                ## IPv4 ##
-                ########## 
-                # Concatenate the bits to form a minimal value that is multiple of 8 and create bytes (or bytes) from it.
-                # For example: ipv4 version (4 bits) + ipv4 hl (4 bits) sum up to 8. So, gather these fields and create a byte.
-                total = create_byte_representation(row, ipv4_prefixes)
-
-                # Concatenate using the `+` operator
-                ipv4_header = b''.join(total)
-
-                # Once we have the 'ipv4_header' fields, calculate the checksum for IPv4, but it is optional
-                if checksum_ipv4:
-                    ipv4_header = compute_ipv4_checksum(ipv4_header)
-                    #print("Header with checksum:", ipv4_header)
-                
-                #########
-                ## UDP ##
-                #########
-                # Concatenate the bits to form a minimal value that is multiple of 8 and create bytes (or bytes) from it.
-                total = create_byte_representation(row, udp_prefixes)
-                
-                # Concatenate using the `+` operator
-                udp_header = b''.join(total)
-                #print("UDP (concatenated): ", udp_header)
-
-                # payload for IPv4/UDP 
-                payload = int(process_field(row, 'ipv4_tl', 16),2) - len(ipv4_header) - len(udp_header)
-                payload = b'\x00' * payload
-                packet_data = ipv4_header + udp_header + payload
-
-                # Save the unique IPs to create ethernet header
-                length_ip = 32
-
-                prefix = 'ipv4_src_'
-                ipv4_src = process_field(row, prefix, length_ip)
-                ipv4_src = binary_to_ipv4_string(ipv4_src)
-                #
-                prefix = 'ipv4_dst_'
-                ipv4_dst = process_field(row, prefix, length_ip)
-                ipv4_dst = binary_to_ipv4_string(ipv4_dst)
-                
-                # Generate a random unique MAC
-                rnd_mac = generate_unique_random_mac(rnd_mac_unique)
-
-                if ipv4_src not in ipv4_to_mac_dict:
-                    ipv4_to_mac_dict[ipv4_src] = rnd_mac
-                
-                # Generate a random unique MAC
-                rnd_mac = generate_unique_random_mac(rnd_mac_unique)
-
-                if ipv4_dst not in ipv4_to_mac_dict:
-                    ipv4_to_mac_dict[ipv4_dst] = rnd_mac
-
-                # Create packet
-                if 'eth_' in protocols:
-                    ##############
-                    ## Ethernet ##
-                    ##############
-                    total = create_byte_representation(row, eth_prefixes)
-                    eth_header = b''.join(total)
-                    packet_data = eth_header + packet_data
-                    packet = Raw(load=packet_data)
-                else:
-                    if checksum_udp:
-                        # Set the checksum field to zero (2 bytes) in udp_header
-                        udp_header = udp_header[:6] + b'\x00\x00' + udp_header[8:]
-                    #packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / Raw(load=packet_data)
-                    packet = IP(ipv4_header) / UDP(udp_header) / Raw(load=payload)
-
-                    # Calculate the UDP checksum
-                    if checksum_udp:
-                        packet_raw = raw(packet)
-                        udp_raw = packet_raw[20:]
-                        
-                        # Calculate the checksum
-                        udp_chksum = in4_chksum(socket.IPPROTO_UDP, packet[IP], udp_raw)  # For more infos, call "help(in4_chksum)"
-                        #print("UDP Checksum: ", hex(udp_chksum))
-                        packet[UDP].chksum = udp_chksum
-                    
-                    packet = Ether(src=ipv4_to_mac_dict[ipv4_src], dst=ipv4_to_mac_dict[ipv4_dst], type=0x800) / packet
-
-                # set timestamp
-                set_timestamp(packet, df, row, columns)
-
-                #print(f"Packet: {packet}")  # Debug: Print the constructed packet
-                packets.append(packet)
-            
-            else:
-                raise ValueError(f"Invalid protocol combination: '{protocols}'.")
-            #print("LEN ROW:", len(row))
         except ValueError as e:
             print(f"Error processing packet for row {index}: {e}")
         except Exception as e:
